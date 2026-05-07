@@ -8,11 +8,14 @@
     </div>
   </div>
 
+  <!-- =========================
+       2. Sidebar Navigation
+       ========================= -->
   <!-- Navigation is role-aware so each operator sees routes appropriate to their responsibility. -->
   <nav class="sidebar-nav">
     <div class="nav-section-label">Main</div>
 
-    <a href="{{ url_for('dashboard') }}" class="nav-item{% if request.endpoint == 'dashboard' %} active{% endif %}">
+    <a href="{{ dashboard_url|default(url_for('dashboard')) }}" class="nav-item{% if request.endpoint in ['dashboard', 'admin_home_file', 'responder_dashboard'] %} active{% endif %}">
       <span class="nav-icon">
         <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
@@ -22,13 +25,13 @@
       Dashboard
     </a>
 
-    <a href="{{ url_for('alerts_page') }}" class="nav-item{% if request.endpoint == 'alerts_page' %} active{% endif %}">
+    <a href="{{ alerts_url|default(url_for('alerts_page')) }}" class="nav-item{% if request.endpoint in ['alerts_page', 'responder_alerts', 'responder_alert_detail'] %} active{% endif %}">
       <span class="nav-icon">
         <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
       </span>
-      Active Alerts
+      {{ alerts_label|default('Alerts') }}
       <span class="nav-badge" id="activeAlertsBadge">{{ active_alerts_count|default(0) }}</span>
     </a>
 

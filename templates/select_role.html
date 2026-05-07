@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Choose Your Role - AcciVision</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+    <!-- =========================
+         1. Role Selection Header
+         ========================= -->
+    <main class="auth-page role-page">
+        <section class="role-container fade-in">
+            <div class="auth-brand role-brand">
+                <div class="brand-icon">A</div>
+                <div>
+                    <div class="brand-name">AcciVision</div>
+                    <div class="brand-sub">Traffic AI System</div>
+                </div>
+            </div>
+
+            <div class="role-header">
+                <h1>Choose Your Role</h1>
+                <p>This choice decides which workspace you will use after registration and sign in.</p>
+            </div>
+
+            <!-- =========================
+                 2. Role Cards Section
+                 ========================= -->
+            <form method="POST" action="{{ url_for('select_role') }}" class="role-grid">
+                <button type="submit" name="role" value="admin" class="role-card">
+                    <span class="role-icon" aria-hidden="true">
+                        <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="4" width="18" height="13" rx="2"></rect>
+                            <line x1="8" y1="21" x2="16" y2="21"></line>
+                            <line x1="12" y1="17" x2="12" y2="21"></line>
+                        </svg>
+                    </span>
+                    <span class="role-card-title">Admin / Operator</span>
+                    <span class="role-card-text">Run detection, review incidents, dispatch alerts, and monitor response status.</span>
+                </button>
+
+                <button type="submit" name="role" value="responder" class="role-card">
+                    <span class="role-icon" aria-hidden="true">
+                        <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10 17h4V5H2v12h3"></path>
+                            <path d="M20 17h2v-3.34a4 4 0 0 0-1.17-2.83L19 9h-5"></path>
+                            <circle cx="7.5" cy="17.5" r="2.5"></circle>
+                            <circle cx="17.5" cy="17.5" r="2.5"></circle>
+                        </svg>
+                    </span>
+                    <span class="role-card-title">Responder</span>
+                    <span class="role-card-text">Receive assigned alerts, update response progress, and resolve active cases.</span>
+                </button>
+            </form>
+        </section>
+    </main>
+
+</body>
+</html>

@@ -1,7 +1,6 @@
 <!-- Standards mode keeps the responder dashboard stable across browsers during time-sensitive work. -->
 <!DOCTYPE html>
 <html lang="en">
-<!-- Shared metadata and stylesheet loading preserve a consistent operator experience between roles. -->
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,12 +10,12 @@
 <body>
 <div class="app-shell">
 
-  <!-- The shared shell keeps navigation and badge counts available while responder-specific content changes inside the page body. -->
+  <!-- =========================
+       1. Responder Sidebar
+       ========================= -->
   {% include 'sidebar.html' %}
 
   <div class="main">
-
-    <!-- The top bar reinforces responder context and dispatch readiness without distracting from active cases. -->
     <div class="topbar">
       <div class="topbar-left">
         <span class="topbar-title">Responder Dashboard</span>
@@ -29,223 +28,134 @@
       </div>
     </div>
 
-    <!-- Main content is intentionally limited to dispatched alerts so responders work only from admin-approved incidents. -->
+    <!-- =========================
+         2. Responder Metrics
+         ========================= -->
     <div class="page-content">
-
-      <!-- Template-side filtering narrows the queue to actionable dispatched records before any responder UI is rendered. -->
-      {% set active_accidents = accidents | rejectattr('closed') | selectattr('notified') | list %}
-      <!-- Priority messaging appears only when there is live responder work pending. -->
-      {% if active_accidents|length > 0 %}
-      <div class="em-banner">
-        <div class="em-left">
-          <div class="em-icon-wrap">!</div>
+      <div class="stats-row">
+        <div class="stat-card fade-in fade-in-1">
           <div>
-            <div class="em-title">Active Notifications</div>
-            <div class="em-sub">Review current alerts and mark each case when a responder has handled it.</div>
+            <div class="stat-label">Active Alerts</div>
+            <div class="stat-value red">{{ active_alerts_count }}</div>
+            <div class="stat-sub" style="color:var(--red-soft);">
+              <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
+              Open incidents not yet closed
+            </div>
+          </div>
+          <div class="stat-icon" style="background:var(--red-bg); color:var(--red-soft);">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          </div>
+        </div>
+
+        <div class="stat-card fade-in fade-in-2">
+          <div>
+            <div class="stat-label">Today's Cases</div>
+            <div class="stat-value">{{ events_today_count }}</div>
+            <div class="stat-sub">
+              <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
+              Recorded incidents in the last 24 hours
+            </div>
+          </div>
+          <div class="stat-icon" style="background:rgba(34,197,94,0.1); color:var(--green);">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+        </div>
+
+        <div class="stat-card fade-in fade-in-3">
+          <div>
+            <div class="stat-label">Assigned Alerts</div>
+            <div class="stat-value blue">{{ assigned_alerts_count }}</div>
+            <div class="stat-sub neutral">All alerts assigned to responders</div>
+          </div>
+          <div class="stat-icon" style="background:rgba(77,163,247,0.1); color:var(--blue-text);">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+        </div>
+
+        <div class="stat-card fade-in fade-in-4">
+          <div>
+            <div class="stat-label">Pending Alerts</div>
+            <div class="stat-value amber">{{ pending_alerts_count }}</div>
+            <div class="stat-sub neutral">Waiting for first response</div>
+          </div>
+          <div class="stat-icon" style="background:var(--amber-bg); color:var(--amber);">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           </div>
         </div>
       </div>
-      {% endif %}
 
-      <!-- The empty state confirms that responder workload is driven by admin dispatch rather than raw detections. -->
-      {% if active_accidents|length == 0 %}
-      <div class="empty-state">
-        <div class="empty-icon">O</div>
-        <h3>No Active Notifications</h3>
-        <p>Alerts will appear here after an admin contacts the authorities.</p>
-      </div>
-      {% else %}
-      <!-- Incident cards mirror the admin design language while exposing responder-specific transitions. -->
-      <div class="alerts-list">
-        <!-- Each responder card stays tied to one incident record so acknowledgement and closure remain auditable. -->
-        {% for acc in active_accidents %}
-        <div class="alert-card {% if loop.first and not acc.responded %}is-critical{% elif loop.index == 2 and not acc.responded %}is-high{% endif %} fade-in" id="incident-{{ acc.id }}">
-          <div class="alert-thumb">
-            <img src="{{ url_for('static', filename='accidents/' + acc.image) }}" alt="Accident">
-            <div class="alert-thumb-overlay">
-              <span class="detection-chip">ACCIDENT</span>
-                <span class="conf-chip" id="incident-state-{{ acc.id }}">{{ acc.status | upper }}</span>
-            </div>
-          </div>
-
-          <div class="alert-body">
-            <div class="alert-top">
-              <div class="alert-head-left">
-                {% if acc.responded %}
-                <span class="severity-chip sev-low" id="incident-badge-{{ acc.id }}">Responded</span>
-                {% elif loop.first %}
-                <span class="severity-chip sev-critical" id="incident-badge-{{ acc.id }}">Active</span>
-                {% elif loop.index == 2 %}
-                <span class="severity-chip sev-high" id="incident-badge-{{ acc.id }}">Active</span>
-                {% else %}
-                <span class="severity-chip sev-medium" id="incident-badge-{{ acc.id }}">Active</span>
-                {% endif %}
-
-                <div class="alert-id">{{ acc.id | upper }}</div>
-                <div class="alert-location">
-                  {% if loop.first %}I-95 Northbound, MM 42
-                  {% elif loop.index == 2 %}Downtown Sector 4
-                  {% else %}Detected Zone{% endif %}
-                </div>
-                <div class="alert-desc" id="incident-desc-{{ acc.id }}">
-                  {% if acc.responded %}
-                  Response received. Close the case to remove it from active alerts.
-                  {% elif loop.first %}
-                  Multiple vehicle collision detected with possible fire
-                  {% elif loop.index == 2 %}
-                  Pedestrian detected in restricted zone
-                  {% else %}
-                  Accident detected in monitored area{% endif %}
-                </div>
-              </div>
-
-              <div style="text-align:right;">
-                <div class="alert-elapsed">{{ acc.elapsed }}</div>
-                <div class="alert-elapsed-label">Time Elapsed</div>
-              </div>
-            </div>
-
-            <!-- Footer actions preserve the two-step lifecycle needed for response and closure timing metrics. -->
-            <div class="alert-footer">
-              {% if acc.notified %}
-              <span class="dispatch-tag ok">
-                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-                Authority Contacted
-              </span>
-              {% else %}
-              <span class="dispatch-tag">
-                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                Awaiting Contact Confirmation
-              </span>
-              {% endif %}
-
-              {% if acc.responded %}
-              <span class="dispatch-tag ok" id="incident-status-tag-{{ acc.id }}">
-                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-                Status: Responded
-              </span>
-              {% else %}
-              <span class="dispatch-tag warn" id="incident-status-tag-{{ acc.id }}">
-                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                Status: Active
-              </span>
-              {% endif %}
-
-              <div style="margin-left:auto; display:flex; gap:0.5rem;" id="incident-actions-{{ acc.id }}">
-                <button class="btn btn-sm btn-danger"
-                  id="respond-action-{{ acc.id }}"
-                  onclick="respondAlert('{{ acc.id }}')"
-                  {% if acc.responded %}style="display:none;"{% endif %}>
-                  Respond
-                </button>
-                <button class="btn btn-sm btn-outline"
-                  id="close-action-{{ acc.id }}"
-                  onclick="closeAlert('{{ acc.id }}')"
-                  {% if not acc.responded %}style="display:none;"{% endif %}>
-                  Close Alert
-                </button>
-              </div>
-            </div>
+      <!-- =========================
+           3. Response Status Chart
+           ========================= -->
+      <div class="panel fade-in responder-chart-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            Alerts by Response Status
           </div>
         </div>
-        {% endfor %}
+        <div class="status-chart">
+          {% set chart_max = response_status_chart|map(attribute='count')|max if response_status_chart else 0 %}
+          {% for item in response_status_chart %}
+          <div class="status-bar-row">
+            <div class="status-bar-label">{{ item.label }}</div>
+            <div class="status-bar-track">
+              <div class="status-bar-fill status-{{ item.key }}" style="width: {{ ((item.count / chart_max) * 100) if chart_max else 0 }}%;"></div>
+            </div>
+            <div class="status-bar-count">{{ item.count }}</div>
+          </div>
+          {% endfor %}
+        </div>
       </div>
-      {% endif %}
 
+      <!-- =========================
+           4. Assigned Alerts List
+           ========================= -->
+      <div class="panel fade-in">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            Assigned Alerts
+          </div>
+        </div>
+
+        {% if accidents|length == 0 %}
+        <div class="empty-state">
+          <div class="empty-icon">O</div>
+          <h3>No Assigned Alerts</h3>
+          <p>Responder alerts will appear here after an admin reports an incident.</p>
+        </div>
+        {% else %}
+        <table class="events-table">
+          <thead>
+            <tr>
+              <th>Alert ID</th>
+              <th>Location</th>
+              <th>Detected</th>
+              <th>Assigned To</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for acc in accidents %}
+            <tr>
+              <td><span class="event-id">{{ acc.id | upper }}</span></td>
+              <td><span class="event-location">{{ acc.location }}</span></td>
+              <td><span class="event-time">{{ acc.elapsed }}</span></td>
+              <td>{{ acc.assigned_responder }}</td>
+              <td><span class="severity-chip {% if acc.response_status == 'resolved' %}sev-low{% elif acc.response_status == 'pending' %}sev-high{% else %}sev-medium{% endif %}">{{ acc.response_status_label }}</span></td>
+              <td><a class="btn btn-sm btn-outline" href="{{ url_for('responder_alert_detail', accident_id=acc.id) }}">View / Update</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
     </div>
 
     <footer class="footer">AcciVision - Responder Interface</footer>
   </div>
-
 </div>
-
-<!-- Toast messaging confirms queue updates without interrupting the responder workflow. -->
-<div id="toast" class="toast">
-  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-  <span id="toastMsg"></span>
-</div>
-
-<!-- Front-end helpers update the queue immediately after backend transitions to keep operational state trustworthy. -->
-<script>
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  document.getElementById('toastMsg').textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 3000);
-}
-
-function updateBadgeCount(id, value) {
-  const node = document.getElementById(id);
-  if (node && typeof value === 'number') node.textContent = value;
-}
-
-function applyIncidentState(id, data) {
-  const stateChip = document.getElementById(`incident-state-${id}`);
-  const badge = document.getElementById(`incident-badge-${id}`);
-  const desc = document.getElementById(`incident-desc-${id}`);
-  const statusTag = document.getElementById(`incident-status-tag-${id}`);
-  const card = document.getElementById(`incident-${id}`);
-  const respondBtn = document.getElementById(`respond-action-${id}`);
-  const closeBtn = document.getElementById(`close-action-${id}`);
-
-  if (data.closed) {
-    if (card) card.remove();
-    return;
-  }
-
-  if (data.responded) {
-    if (stateChip) stateChip.textContent = 'RESPONDED';
-    if (badge) {
-      badge.textContent = 'Responded';
-      badge.className = 'severity-chip sev-low';
-    }
-    if (desc) desc.textContent = 'Response received. Close the case to remove it from active alerts.';
-    if (statusTag) {
-      statusTag.className = 'dispatch-tag ok';
-      statusTag.innerHTML = '<svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Status: Responded';
-    }
-    if (respondBtn) respondBtn.style.display = 'none';
-    if (closeBtn) closeBtn.style.display = '';
-  }
-}
-
-async function respondAlert(id) {
-  try {
-    const res = await fetch(`/respond_alert/${id}`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      showToast(data.error || 'Unable to update incident status.');
-      return;
-    }
-
-    updateBadgeCount('activeAlertsBadge', data.active_alerts_count);
-    applyIncidentState(id, data);
-    showToast(data.message || 'Incident status updated.');
-  } catch (e) {
-    console.error(e);
-    showToast('Unable to update incident status right now.');
-  }
-}
-
-async function closeAlert(id) {
-  try {
-    const res = await fetch(`/close_alert/${id}`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      showToast(data.error || 'Unable to close incident.');
-      return;
-    }
-
-    updateBadgeCount('activeAlertsBadge', data.active_alerts_count);
-    applyIncidentState(id, data);
-    showToast(data.message || 'Incident closed.');
-  } catch (e) {
-    console.error(e);
-    showToast('Unable to close incident right now.');
-  }
-}
-
-setInterval(() => location.reload(), 30000);
-</script>
 </body>
 </html>

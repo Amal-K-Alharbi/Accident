@@ -11,10 +11,11 @@ import numpy as np
 from datetime import datetime
 from flask import (
     Flask, render_template, request, Response,
-    jsonify, session, redirect, url_for
+    jsonify, session, redirect, url_for, send_from_directory
 )
 from ultralytics import YOLO
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # The application object centralizes configuration, routing, and request handling for the entire system.
 app = Flask(__name__)
@@ -51,6 +52,7 @@ with open(LABELS_PATH, 'r') as f:
 # Shared runtime flags coordinate long-lived streaming loops and browser polling across multiple request handlers.
 camera_active = False
 current_video_path = None
+current_video_filename = None
 video_active = False
 accident_flag = False          # polled by browser for sound
 accident_flag_lock = threading.Lock()
@@ -63,7 +65,8 @@ last_snapshot_time = 0
 # Encoding settings are fixed up front to keep frame streaming predictable under repeated load.
 ENCODE_PARAM = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
 
-# High-confidence detections bypass manual review so clear incidents reach responders immediately.
+# High-confidence incidents go straight to responders; medium-confidence incidents wait for admin review.
+ADMIN_REVIEW_CONFIDENCE_THRESHOLD = 0.50
 AUTO_REPORT_CONFIDENCE_THRESHOLD = 0.80
 FRAME_SKIP_INTERVAL = 2
 MODEL_INPUT_SIZE = 640
@@ -124,6 +127,14 @@ def init_db():
         conn.execute("ALTER TABLE accidents ADD COLUMN closed_at REAL")
     if 'detection_time_seconds' not in accident_columns:
         conn.execute("ALTER TABLE accidents ADD COLUMN detection_time_seconds REAL")
+    if 'response_status' not in accident_columns:
+        conn.execute("ALTER TABLE accidents ADD COLUMN response_status TEXT DEFAULT 'pending'")
+    if 'assigned_responder' not in accident_columns:
+        conn.execute("ALTER TABLE accidents ADD COLUMN assigned_responder TEXT")
+    if 'confidence' not in accident_columns:
+        conn.execute("ALTER TABLE accidents ADD COLUMN confidence REAL DEFAULT 0")
+    if 'source_video' not in accident_columns:
+        conn.execute("ALTER TABLE accidents ADD COLUMN source_video TEXT")
 
     conn.execute(
         '''
@@ -144,6 +155,18 @@ def init_db():
         WHERE status IS NULL OR TRIM(status) = ''
         '''
     )
+    conn.execute(
+        '''
+        UPDATE accidents
+        SET response_status = CASE
+            WHEN status = 'closed' THEN 'resolved'
+            WHEN status = 'responded' THEN 'acknowledged'
+            WHEN status = 'sent_to_responder' THEN COALESCE(response_status, 'pending')
+            ELSE COALESCE(response_status, 'pending')
+        END
+        WHERE response_status IS NULL OR TRIM(response_status) = ''
+        '''
+    )
 
     conn.commit()
     conn.close()
@@ -153,9 +176,30 @@ def init_db():
 init_db()
 
 
-# Password hashing keeps stored credentials irreversible and separates secure storage from raw form input.
+# Password hashing keeps stored credentials irreversible and supports safe upgrades from older hashes.
 def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+    return generate_password_hash(password)
+
+
+def verify_password(stored_password, entered_password):
+    # 1. Password Verification and Legacy Upgrade Check
+    if not stored_password or not entered_password:
+        return False, False
+
+    try:
+        if check_password_hash(stored_password, entered_password):
+            return True, False
+    except (ValueError, TypeError):
+        pass
+
+    legacy_sha = hashlib.sha256(entered_password.encode()).hexdigest()
+    if stored_password == legacy_sha:
+        return True, True
+
+    if stored_password == entered_password:
+        return True, True
+
+    return False, False
 
 
 # Role lookup is isolated because authorization decisions should rely on one trusted access path.
@@ -212,7 +256,7 @@ def get_alert_counts(conn=None):
     }
 
 
-# Detection-time metrics are derived centrally so dashboard reporting reflects model responsiveness rather than human workflow timing.
+# Detection-time metrics reflect model inference speed, not upload, notification, or responder timing.
 def get_average_response_time(conn=None):
     should_close = conn is None
     if conn is None:
@@ -237,12 +281,12 @@ def get_average_response_time(conn=None):
     if average_seconds is None:
         return {
             'avg_response_seconds': None,
-            'avg_response_time_label': 'No data available'
+            'avg_response_time_label': 'No data'
         }
 
     return {
         'avg_response_seconds': average_seconds,
-        'avg_response_time_label': format_duration(average_seconds)
+        'avg_response_time_label': format_model_detection_time(average_seconds)
     }
 
 
@@ -254,6 +298,32 @@ def get_responded_cases_count(conn=None):
     return get_alert_counts(conn)['responded_cases_count']
 
 
+def get_response_status_counts(conn=None):
+    # 1. Responder Status Counts
+    should_close = conn is None
+    if conn is None:
+        conn = get_db()
+
+    rows = conn.execute(
+        '''
+        SELECT response_status, COUNT(*) AS total
+        FROM accidents
+        WHERE status IN ('sent_to_responder', 'responded', 'closed')
+           OR notified = 1
+        GROUP BY response_status
+        '''
+    ).fetchall()
+
+    if should_close:
+        conn.close()
+
+    counts = {status: 0 for status in ['pending', 'acknowledged', 'en_route', 'on_scene', 'resolved']}
+    for row in rows:
+        status = row['response_status'] if row['response_status'] in counts else 'pending'
+        counts[status] += row['total'] or 0
+    return counts
+
+
 # Recent event shaping converts raw records into dashboard-friendly summaries without leaking storage details into templates.
 def build_recent_events(conn=None, limit=6):
     should_close = conn is None
@@ -262,7 +332,7 @@ def build_recent_events(conn=None, limit=6):
 
     rows = conn.execute(
         '''
-        SELECT id, timestamp, notified, responded, closed, status
+        SELECT id, timestamp, notified, responded, closed, status, response_status
         FROM accidents
         ORDER BY timestamp DESC
         LIMIT ?
@@ -273,7 +343,8 @@ def build_recent_events(conn=None, limit=6):
     recent_events = []
     for index, row in enumerate(rows, start=1):
         normalized_status = get_alert_status(row)
-        status = build_incident_status(normalized_status)
+        response_label = build_response_status_label(get_response_status(row))
+        status = response_label if normalized_status in {'sent_to_responder', 'responded', 'closed'} else build_incident_status(normalized_status)
         recent_events.append({
             'event_id': f"EVT-{datetime.fromtimestamp(row['timestamp']).strftime('%Y%m%d')}-{index:03d}",
             'location': f"Monitored Zone {((index - 1) % 4) + 1}",
@@ -295,6 +366,10 @@ def build_recent_events(conn=None, limit=6):
     ]
 
 
+# =========================
+# 5. Alert Status Update Logic
+# =========================
+
 # Status normalization bridges legacy boolean fields and the newer workflow column so the UI can reason about one canonical state.
 def get_alert_status(row):
     raw_status = row['status'] if 'status' in row.keys() else None
@@ -308,6 +383,50 @@ def get_alert_status(row):
     if row['notified']:
         return 'sent_to_responder'
     return 'new'
+
+
+# Responder status labels are kept separate from admin lifecycle labels.
+def get_response_status(row):
+    raw_status = row['response_status'] if 'response_status' in row.keys() else None
+    if raw_status in {'pending', 'acknowledged', 'en_route', 'on_scene', 'resolved'}:
+        return raw_status
+    if get_alert_status(row) == 'closed':
+        return 'resolved'
+    if get_alert_status(row) == 'responded':
+        return 'acknowledged'
+    return 'pending'
+
+
+def build_response_status_label(status):
+    labels = {
+        'pending': 'Pending',
+        'acknowledged': 'Acknowledged',
+        'en_route': 'En Route',
+        'on_scene': 'On Scene',
+        'resolved': 'Resolved',
+    }
+    return labels.get(status, 'Pending')
+
+
+def build_fake_location(alert_id):
+    # 1. Stable Fake Location
+    locations = [
+        'King Fahd Road - Northbound',
+        'Olaya Street & Makkah Road',
+        'Airport Road Camera 04',
+        'Downtown Sector 2',
+        'Main St & 4th Ave',
+    ]
+    index = sum(ord(char) for char in str(alert_id)) % len(locations)
+    return locations[index]
+
+
+def format_confidence(value):
+    # 2. Confidence Formatting
+    try:
+        return f"{float(value or 0) * 100:.0f}%"
+    except (TypeError, ValueError):
+        return "0%"
 
 
 # Human-readable labels are derived in one place to keep wording stable across admin and responder views.
@@ -326,6 +445,7 @@ def build_incident_status(status):
 # Serialization prepares database rows for rendering by attaching computed timings and display-oriented fields.
 def serialize_accident(row):
     status = get_alert_status(row)
+    response_status = get_response_status(row)
     notified = bool(row['notified']) or status in {'sent_to_responder', 'responded', 'closed'}
     responded = bool(row['responded']) or status in {'responded', 'closed'}
     closed = bool(row['closed']) or status == 'closed'
@@ -337,9 +457,16 @@ def serialize_accident(row):
     return {
         'id': row['id'],
         'image': row['image'],
+        'confidence': row['confidence'] if 'confidence' in row.keys() else 0,
+        'confidence_label': format_confidence(row['confidence'] if 'confidence' in row.keys() else 0),
+        'source_video': row['source_video'] if 'source_video' in row.keys() else None,
         'elapsed': get_elapsed_time(row['timestamp']),
         'date': datetime.fromtimestamp(row['timestamp']).strftime('%Y-%m-%d %H:%M:%S'),
         'created_at': row['timestamp'],
+        'location': build_fake_location(row['id']),
+        'assigned_responder': row['assigned_responder'] if 'assigned_responder' in row.keys() and row['assigned_responder'] else 'Responder Team',
+        'response_status': response_status,
+        'response_status_label': build_response_status_label(response_status),
         'sent_at': effective_sent_at,
         'responded_at': responded_at,
         'closed_at': closed_at,
@@ -353,6 +480,10 @@ def serialize_accident(row):
     }
 
 
+# =========================
+# 1. Shared Page Context
+# =========================
+
 # Shared dashboard context keeps navigation badges, summary metrics, and user identity aligned across templates.
 def build_dashboard_context():
     role = get_current_role()
@@ -360,6 +491,7 @@ def build_dashboard_context():
     alert_counts = get_alert_counts(conn)
     response_metrics = get_average_response_time(conn)
     recent_events = build_recent_events(conn)
+    response_status_counts = get_response_status_counts(conn)
     working_camera_count = get_working_camera_count()
     events_today_count = conn.execute(
         '''
@@ -379,12 +511,14 @@ def build_dashboard_context():
         'cameras_total_count': working_camera_count,
         'events_today_count': events_today_count,
         'recent_events': recent_events,
+        'response_status_counts': response_status_counts,
         'current_role': role,
         'dashboard_title': 'Dashboard',
         'user_name': user_name,
         'user_role_label': role.title(),
-        'alerts_url': url_for('alerts_page'),
-        'alerts_label': 'Active Alerts',
+        'alerts_url': url_for('responder_alerts') if role == 'responder' else url_for('alerts_page'),
+        'dashboard_url': url_for('responder_dashboard') if role == 'responder' else url_for('admin_home_file'),
+        'alerts_label': 'Responder Alerts' if role == 'responder' else 'Alerts',
     }
 
 
@@ -393,9 +527,17 @@ def render_dashboard_page():
     return render_template('home.html', **build_dashboard_context())
 
 
+# =========================
+# 2. Authentication Logic
+# =========================
+
 # Post-login routing is role-aware so each operator lands in the workflow most relevant to their responsibility.
 def get_post_login_endpoint():
-    return 'alerts_page' if get_current_role() == 'responder' else 'dashboard'
+    return 'responder_dashboard' if get_current_role() == 'responder' else 'dashboard'
+
+
+def get_post_login_url():
+    return url_for('responder_dashboard') if get_current_role() == 'responder' else url_for('admin_home_file')
 
 
 # Authentication enforcement is abstracted into a decorator to avoid repeating redirect logic on protected routes.
@@ -420,6 +562,10 @@ def add_no_cache_headers(response):
     return response
 
 
+# =========================
+# 3. Role-Based Access Control
+# =========================
+
 # Responder-only authorization separates operational case handling from administrative controls.
 def responder_required(f):
     from functools import wraps
@@ -427,7 +573,7 @@ def responder_required(f):
     @login_required
     def decorated(*args, **kwargs):
         if get_current_role() != 'responder':
-            return "Access Denied", 403
+            return redirect(url_for('admin_home_file'))
         return f(*args, **kwargs)
     return decorated
 
@@ -439,7 +585,7 @@ def admin_required(f):
     @login_required
     def decorated(*args, **kwargs):
         if get_current_role() != 'admin':
-            return redirect(url_for('dashboard'))
+            return redirect(url_for('responder_dashboard'))
         return f(*args, **kwargs)
     return decorated
 
@@ -477,6 +623,18 @@ def format_duration(seconds):
     if minutes > 0:
         return f"{minutes} min {remaining_seconds} sec"
     return f"{remaining_seconds} sec"
+
+
+def format_model_detection_time(seconds):
+    # 1. Model Timing Display
+    if seconds is None:
+        return 'No data'
+
+    seconds = max(float(seconds), 0.0)
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    label = f"{seconds:.2f}".rstrip('0').rstrip('.')
+    return f"{label}s"
 
 
 # Camera probing is isolated so dashboard device counts and live capture can share the same platform-aware opening strategy.
@@ -520,12 +678,12 @@ def fetch_accident_row(conn, accident_id):
 
 # Admin visibility rules keep the live review queue focused while still retaining dismissed or completed records in storage.
 def accident_visible_to_admin(row):
-    return get_alert_status(row) not in {'closed', 'false_alarm'}
+    return get_alert_status(row) != 'false_alarm'
 
 
 # Responder visibility is intentionally narrower so only dispatched incidents enter the active response queue.
 def accident_visible_to_responder(row):
-    return get_alert_status(row) in {'sent_to_responder', 'responded'}
+    return get_alert_status(row) in {'sent_to_responder', 'responded', 'closed'}
 
 
 # Action responses share one serializer so asynchronous UI updates remain consistent after any alert transition.
@@ -538,6 +696,10 @@ def build_alert_action_response(conn, accident_id, message):
         'id': accident_id,
         'status': accident['status'],
         'internal_status': accident['internal_status'],
+        'response_status': accident['response_status'],
+        'response_status_label': accident['response_status_label'],
+        'assigned_responder': accident['assigned_responder'],
+        'confidence_label': accident['confidence_label'],
         'notified': accident['notified'],
         'responded': accident['responded'],
         'closed': accident['closed'],
@@ -576,6 +738,8 @@ def report_alert_by_id(accident_id):
         UPDATE accidents
         SET notified = 1,
             status = 'sent_to_responder',
+            response_status = COALESCE(response_status, 'pending'),
+            assigned_responder = COALESCE(assigned_responder, 'Responder Team'),
             sent_at = ?,
             reported_at = COALESCE(reported_at, ?)
         WHERE id = ?
@@ -624,47 +788,19 @@ def false_alarm_by_id(accident_id):
 
 # Acknowledgement is stored separately from closure so the system can measure reaction time before full resolution time.
 def respond_alert_by_id(accident_id):
-    conn = get_db()
-    row = fetch_accident_row(conn, accident_id)
-    if not row:
-        conn.close()
-        return jsonify({'success': False, 'error': 'Accident not found'}), 404
-
-    status = get_alert_status(row)
-    if status not in {'sent_to_responder', 'responded'} and not row['notified']:
-        conn.close()
-        return jsonify({'success': False, 'error': 'This alert has not been sent to responders yet'}), 400
-
-    if status == 'closed':
-        response = build_alert_action_response(conn, accident_id, 'Alert already closed.')
-        conn.close()
-        return jsonify(response)
-
-    if status == 'responded':
-        response = build_alert_action_response(conn, accident_id, 'Incident already marked as responded.')
-        conn.close()
-        return jsonify(response)
-
-    responded_at = time.time()
-    conn.execute(
-        '''
-        UPDATE accidents
-        SET responded = 1,
-            notified = 1,
-            status = 'responded',
-            responded_at = ?
-        WHERE id = ?
-        ''',
-        (responded_at, accident_id)
-    )
-    conn.commit()
-    response = build_alert_action_response(conn, accident_id, 'Incident marked as responded. You can close it now.')
-    conn.close()
-    return jsonify(response)
+    return update_responder_status_by_id(accident_id, 'acknowledged')
 
 
 # Final closure is separated from acknowledgement to preserve a complete and measurable incident lifecycle.
 def close_alert_by_id(accident_id):
+    return update_responder_status_by_id(accident_id, 'resolved')
+
+
+def update_responder_status_by_id(accident_id, response_status):
+    # 1. Validate the requested responder state before touching the incident record.
+    if response_status not in {'acknowledged', 'en_route', 'on_scene', 'resolved'}:
+        return jsonify({'success': False, 'error': 'Invalid responder status.'}), 400
+
     conn = get_db()
     row = fetch_accident_row(conn, accident_id)
     if not row:
@@ -672,36 +808,61 @@ def close_alert_by_id(accident_id):
         return jsonify({'success': False, 'error': 'Accident not found'}), 404
 
     status = get_alert_status(row)
-    if status not in {'responded', 'closed'} and not row['responded']:
+    if status not in {'sent_to_responder', 'responded', 'closed'} and not row['notified']:
         conn.close()
-        return jsonify({'success': False, 'error': 'Alert must be responded to before it can be closed.'}), 400
+        return jsonify({'success': False, 'error': 'This alert has not been sent to responders yet'}), 400
 
-    if status == 'closed':
+    if status == 'closed' and response_status != 'resolved':
         response = build_alert_action_response(conn, accident_id, 'Alert already closed.')
         conn.close()
         return jsonify(response)
 
-    closed_at = time.time()
-    conn.execute(
-        '''
-        UPDATE accidents
-        SET responded = 1,
-            closed = 1,
-            status = 'closed',
-            closed_at = ?
-        WHERE id = ?
-        ''',
-        (closed_at, accident_id)
-    )
+    # 2. Preserve first-response timing while allowing status progress to continue.
+    now = time.time()
+    assigned_responder = session.get('user_email') or row['assigned_responder'] or 'Responder Team'
+    if response_status == 'resolved':
+        conn.execute(
+            '''
+            UPDATE accidents
+            SET responded = 1,
+                notified = 1,
+                closed = 1,
+                status = 'closed',
+                response_status = 'resolved',
+                assigned_responder = ?,
+                responded_at = COALESCE(responded_at, ?),
+                closed_at = COALESCE(closed_at, ?)
+            WHERE id = ?
+            ''',
+            (assigned_responder, now, now, accident_id)
+        )
+    else:
+        conn.execute(
+            '''
+            UPDATE accidents
+            SET responded = 1,
+                notified = 1,
+                closed = 0,
+                status = 'responded',
+                response_status = ?,
+                assigned_responder = ?,
+                responded_at = COALESCE(responded_at, ?)
+            WHERE id = ?
+            ''',
+            (response_status, assigned_responder, now, accident_id)
+        )
     conn.commit()
-    response = build_alert_action_response(conn, accident_id, 'Incident closed and removed from active cases.')
+
+    # 3. Return the updated state so both dashboards can refresh immediately.
+    message = f"Responder status updated to {build_response_status_label(response_status)}."
+    response = build_alert_action_response(conn, accident_id, message)
     conn.close()
     return jsonify(response)
 
 
 # Snapshot persistence runs off the streaming path because evidence capture should not block live detection output.
-def save_snapshot_background(frame_copy, auto_send_to_responder=False, detection_time_seconds=None):
-    """Save accident snapshot in a background thread — never blocks video."""
+def save_snapshot_background(frame_copy, confidence=0.0, auto_send_to_responder=False, detection_time_seconds=None, source_video=None):
+    # 1. Save Evidence Snapshot
     accident_id = str(uuid.uuid4())[:8]
     filename = f"accident_{accident_id}.jpg"
     filepath = os.path.join(ACCIDENTS_DIR, filename)
@@ -713,8 +874,9 @@ def save_snapshot_background(frame_copy, auto_send_to_responder=False, detection
     conn.execute(
         '''
         INSERT INTO accidents (
-            id, image, timestamp, notified, status, sent_at, reported_at, detection_time_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            id, image, timestamp, notified, status, sent_at, reported_at,
+            detection_time_seconds, confidence, source_video
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             accident_id,
@@ -725,6 +887,8 @@ def save_snapshot_background(frame_copy, auto_send_to_responder=False, detection
             captured_at if auto_send_to_responder else None,
             captured_at if auto_send_to_responder else None,
             detection_time_seconds,
+            confidence,
+            source_video,
         )
     )
     conn.commit()
@@ -733,8 +897,7 @@ def save_snapshot_background(frame_copy, auto_send_to_responder=False, detection
 
 # Frame processing owns inference, visual overlays, and alert signaling because those concerns must stay synchronized per image.
 def process_frame(frame):
-    """Run YOLO detection on a single frame and draw results.
-    OPTIMIZED: no pandas, direct numpy array access, smaller inference size."""
+    # 1. Model Inference and Confidence Routing
     global accident_flag
 
     frame = cv2.resize(frame, (1020, 500))
@@ -768,13 +931,16 @@ def process_frame(frame):
                 cv2.putText(frame, f"{label} {conf:.0%}", (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
 
-    if accident_detected:
+    reviewable_accident = accident_detected and max_accident_confidence >= ADMIN_REVIEW_CONFIDENCE_THRESHOLD
+    auto_send_to_responder = max_accident_confidence >= AUTO_REPORT_CONFIDENCE_THRESHOLD
+
+    if reviewable_accident:
         h, w = frame.shape[:2]
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, 0), (w, 65), (0, 0, 180), -1)
         cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
 
-        text = "!!! ACCIDENT DETECTED !!!"
+        text = "ACCIDENT DETECTED - RESPONDER ALERT" if auto_send_to_responder else "ACCIDENT DETECTED - ADMIN REVIEW"
         font = cv2.FONT_HERSHEY_DUPLEX
         (tw, th), _ = cv2.getTextSize(text, font, 1.1, 2)
         cx = (w - tw) // 2
@@ -788,13 +954,12 @@ def process_frame(frame):
         with accident_flag_lock:
             accident_flag = True
 
-    auto_send_to_responder = accident_detected and max_accident_confidence >= AUTO_REPORT_CONFIDENCE_THRESHOLD
-    return frame, accident_detected, auto_send_to_responder, detection_time_seconds
+    return frame, reviewable_accident, auto_send_to_responder, detection_time_seconds, max_accident_confidence
 
 
 # Snapshot gating balances evidence retention against storage noise during sustained detections.
-def try_save_snapshot(frame, auto_send_to_responder=False, detection_time_seconds=None):
-    """Try to save a snapshot — only once per 30s, in background thread."""
+def try_save_snapshot(frame, confidence=0.0, auto_send_to_responder=False, detection_time_seconds=None, source_video=None):
+    # 1. Save One Snapshot Per Cooldown
     global last_snapshot_time
     now = time.time()
     if now - last_snapshot_time >= 30:
@@ -802,14 +967,14 @@ def try_save_snapshot(frame, auto_send_to_responder=False, detection_time_second
         snapshot = frame.copy()
         threading.Thread(
             target=save_snapshot_background,
-            args=(snapshot, auto_send_to_responder, detection_time_seconds),
+            args=(snapshot, confidence, auto_send_to_responder, detection_time_seconds, source_video),
             daemon=True
         ).start()
 
 
 # Uploaded footage shares the same detection pipeline as live input so operator expectations stay consistent across sources.
 def generate_video_frames():
-    """Generator for uploaded video streaming — OPTIMIZED."""
+    # 1. Uploaded Video Streaming
     global current_video_path, video_active
 
     if not current_video_path or not os.path.exists(current_video_path):
@@ -832,11 +997,11 @@ def generate_video_frames():
         if frame_count % FRAME_SKIP_INTERVAL != 0:
             continue
 
-        processed, detected, auto_send_to_responder, detection_time_seconds = process_frame(frame)
+        processed, detected, auto_send_to_responder, detection_time_seconds, confidence = process_frame(frame)
 
        
         if detected:
-            try_save_snapshot(processed, auto_send_to_responder, detection_time_seconds)
+            try_save_snapshot(processed, confidence, auto_send_to_responder, detection_time_seconds, current_video_filename)
 
         _, buffer = cv2.imencode('.jpg', processed, ENCODE_PARAM)
         yield (b'--frame\r\n'
@@ -848,7 +1013,7 @@ def generate_video_frames():
 
 # Camera streaming is separated from uploaded playback because device access and lifecycle rules differ.
 def generate_camera_frames():
-    """Generator for live camera streaming — OPTIMIZED."""
+    # 1. Live Camera Streaming
     global camera_active
 
     cap = open_camera_capture(0)
@@ -871,11 +1036,11 @@ def generate_camera_frames():
         if frame_count % FRAME_SKIP_INTERVAL != 0:
             continue
 
-        processed, detected, auto_send_to_responder, detection_time_seconds = process_frame(frame)
+        processed, detected, auto_send_to_responder, detection_time_seconds, confidence = process_frame(frame)
 
         
         if detected:
-            try_save_snapshot(processed, auto_send_to_responder, detection_time_seconds)
+            try_save_snapshot(processed, confidence, auto_send_to_responder, detection_time_seconds)
 
         _, buffer = cv2.imencode('.jpg', processed, ENCODE_PARAM)
         yield (b'--frame\r\n'
@@ -887,16 +1052,27 @@ def generate_camera_frames():
 
 
 
+# =========================
+# 1. Route Configuration
+# =========================
+
 # Authentication routes combine sign-in and sign-up because this deployment keeps onboarding lightweight and local.
+@app.route('/login.html', methods=['GET', 'POST'])
 @app.route('/login', methods=['GET', 'POST'])
 # Login coordinates account creation, credential verification, and role-aware redirection into protected workflows.
 def login():
     if 'user_id' in session:
-        return redirect(url_for(get_post_login_endpoint()))
+        return redirect(get_post_login_url())
 
     error = None
     success = None
-    show_signup = False
+    selected_role = request.args.get('role') or session.get('pending_registration_role')
+    selected_role = selected_role if selected_role in {'admin', 'responder'} else 'admin'
+    role_locked = 'pending_registration_role' in session
+    show_signup = request.args.get('mode') == 'signup'
+
+    if request.args.get('registered') == '1':
+        success = 'Account created successfully! Please sign in.'
 
     if request.method == 'POST':
         form_type = request.form.get('form_type')
@@ -906,9 +1082,12 @@ def login():
         if form_type == 'signup':
             show_signup = True
             confirm = request.form.get('confirm_password', '')
-            role = request.form.get('role', 'admin').strip().lower()
+            role = session.get('pending_registration_role')
             conn = get_db()
 
+            if role not in {'admin', 'responder'}:
+                conn.close()
+                return redirect(url_for('select_role'))
             if not email or not password:
                 error = 'Please fill in all fields.'
             elif '@' not in email or '.' not in email:
@@ -929,27 +1108,70 @@ def login():
                         (email, hash_password(password), role)
                     )
                     conn.commit()
-                    success = 'Account created successfully! Please sign in.'
-                    show_signup = False
+                    session.pop('pending_registration_role', None)
+                    conn.close()
+                    return redirect(url_for('login', registered=1))
             conn.close()
 
         elif form_type == 'login':
             conn = get_db()
             user = conn.execute(
-                'SELECT * FROM users WHERE email = ? AND password = ?',
-                (email, hash_password(password))
+                'SELECT * FROM users WHERE email = ?',
+                (email,)
             ).fetchone()
-            conn.close()
 
-            if user:
+            password_ok, needs_password_upgrade = verify_password(user['password'], password) if user else (False, False)
+            if user and password_ok:
+                if needs_password_upgrade:
+                    conn.execute(
+                        'UPDATE users SET password = ? WHERE id = ?',
+                        (hash_password(password), user['id'])
+                    )
+                    conn.commit()
+                conn.close()
                 session['user_id'] = user['id']
                 session['user_email'] = email
                 session['user_role'] = user['role'] if user['role'] in {'admin', 'responder'} else 'admin'
-                return redirect(url_for(get_post_login_endpoint()))
+                return redirect(get_post_login_url())
             else:
+                conn.close()
                 error = 'Invalid email or password.'
 
-    return render_template('login.html', error=error, success=success, show_signup=show_signup)
+    return render_template(
+        'login.html',
+        error=error,
+        success=success,
+        show_signup=show_signup,
+        selected_role=selected_role,
+        role_locked=role_locked
+    )
+
+
+@app.route('/select_role.html', methods=['GET', 'POST'])
+@app.route('/select-role', methods=['GET', 'POST'], endpoint='select_role')
+# Role selection is the single entry point into role-specific registration.
+def select_role():
+    if request.method == 'POST':
+        role = request.form.get('role', '').strip().lower()
+        if role == 'admin':
+            return redirect(url_for('register_admin'))
+        if role == 'responder':
+            return redirect(url_for('register_responder'))
+    return render_template('select_role.html')
+
+
+@app.route('/register/admin')
+# 1. Admin selection opens the existing registration form with the Admin role locked.
+def register_admin():
+    session['pending_registration_role'] = 'admin'
+    return redirect(url_for('login', mode='signup', role='admin'))
+
+
+@app.route('/register/responder')
+# 2. Responder selection opens the existing registration form with the Responder role locked.
+def register_responder():
+    session['pending_registration_role'] = 'responder'
+    return redirect(url_for('login', mode='signup', role='responder'))
 
 
 # Explicit logout exists because shared operator machines require a clear and immediate session reset path.
@@ -965,6 +1187,7 @@ def logout():
 
 
 # The public landing page stays separate from the dashboard to support unauthenticated discovery of the system.
+@app.route('/intro.html')
 @app.route('/')
 # The introduction page presents product context before an operator signs in.
 def intro():
@@ -976,18 +1199,30 @@ def intro():
 @login_required
 # Home resolves through one redirect point so role-specific landing behavior remains centralized.
 def home():
-    return redirect(url_for(get_post_login_endpoint()))
+    return redirect(get_post_login_url())
 
+
+# =========================
+# 4. Admin Routes
+# =========================
 
 # The dashboard route exposes the shared operational overview used after authentication.
 @app.route('/dashboard', endpoint='dashboard')
-@login_required
+@admin_required
 # Dashboard rendering stays thin so metrics and navigation composition continue to come from shared helpers.
 def dashboard():
     return render_dashboard_page()
 
 
+@app.route('/home.html', endpoint='admin_home_file')
+@admin_required
+# The home.html alias keeps the requested admin dashboard filename available.
+def admin_home_file():
+    return render_dashboard_page()
+
+
 # Detection controls are admin-only because they can create new evidence and trigger downstream alerts.
+@app.route('/detect.html')
 @app.route('/detect')
 @admin_required
 # The detect page hosts ingestion controls for uploaded footage and live camera monitoring.
@@ -995,9 +1230,10 @@ def detect():
     return render_template('detect.html', **build_dashboard_context())
 
 
-# One alerts entry point simplifies navigation while allowing role-specific rendering behind the scenes.
+# Admin alerts are kept separate from responder work queues so each role has a clear page boundary.
+@app.route('/alerts.html')
 @app.route('/alerts')
-@login_required
+@admin_required
 # Alert listing applies role-scoped visibility before rendering so each audience sees only relevant work.
 def alerts_page():
     conn = get_db()
@@ -1005,17 +1241,88 @@ def alerts_page():
     alert_counts = get_alert_counts(conn)
     conn.close()
 
-    if get_current_role() == 'responder':
-        accidents = [serialize_accident(row) for row in rows if accident_visible_to_responder(row)]
-    else:
-        accidents = [serialize_accident(row) for row in rows if accident_visible_to_admin(row)]
+    accidents = [serialize_accident(row) for row in rows if accident_visible_to_admin(row)]
 
     context = build_dashboard_context()
     context.update(alert_counts)
 
-    if get_current_role() == 'responder':
-        return render_template('respond.html', accidents=accidents, **context)
     return render_template('alerts.html', accidents=accidents, **context)
+
+
+# =========================
+# 5. Responder Routes
+# =========================
+
+@app.route('/responder', endpoint='responder_dashboard')
+# The responder dashboard shows only dispatched active incidents.
+@responder_required
+def responder_dashboard():
+    return render_responder_queue()
+
+
+def render_responder_queue():
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM accidents ORDER BY timestamp DESC').fetchall()
+    alert_counts = get_alert_counts(conn)
+    conn.close()
+
+    accidents = [serialize_accident(row) for row in rows if accident_visible_to_responder(row)]
+    responder_stats = {
+        'assigned_alerts_count': len(accidents),
+        'pending_alerts_count': sum(1 for accident in accidents if accident['response_status'] == 'pending'),
+        'acknowledged_alerts_count': sum(1 for accident in accidents if accident['response_status'] in {'acknowledged', 'en_route', 'on_scene'}),
+        'resolved_alerts_count': sum(1 for accident in accidents if accident['response_status'] == 'resolved'),
+        'response_status_chart': [
+            {'key': 'pending', 'label': 'Pending', 'count': sum(1 for accident in accidents if accident['response_status'] == 'pending')},
+            {'key': 'acknowledged', 'label': 'Acknowledged', 'count': sum(1 for accident in accidents if accident['response_status'] == 'acknowledged')},
+            {'key': 'en_route', 'label': 'En Route', 'count': sum(1 for accident in accidents if accident['response_status'] == 'en_route')},
+            {'key': 'on_scene', 'label': 'On Scene', 'count': sum(1 for accident in accidents if accident['response_status'] == 'on_scene')},
+            {'key': 'resolved', 'label': 'Resolved', 'count': sum(1 for accident in accidents if accident['response_status'] == 'resolved')},
+        ],
+    }
+    context = build_dashboard_context()
+    context.update(alert_counts)
+    context.update(responder_stats)
+    return render_template('respond.html', accidents=accidents, **context)
+
+
+@app.route('/responder_alert.html')
+@app.route('/responder/alerts', endpoint='responder_alerts')
+# Responder alert navigation opens the first assigned alert in the update workspace.
+@responder_required
+def responder_alerts():
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM accidents ORDER BY timestamp DESC').fetchall()
+    conn.close()
+
+    accidents = [serialize_accident(row) for row in rows if accident_visible_to_responder(row)]
+    return render_responder_alert_page(None, accidents)
+
+
+@app.route('/responder/alert/<accident_id>', endpoint='responder_alert_detail')
+# A responder-only detail page is available for direct incident review.
+@responder_required
+def responder_alert_detail(accident_id):
+    conn = get_db()
+    row = fetch_accident_row(conn, accident_id)
+
+    if not row or not accident_visible_to_responder(row):
+        conn.close()
+        return redirect(url_for('responder_dashboard'))
+
+    accidents = [serialize_accident(item) for item in conn.execute('SELECT * FROM accidents ORDER BY timestamp DESC').fetchall() if accident_visible_to_responder(item)]
+    conn.close()
+    return render_responder_alert_page(serialize_accident(row), accidents)
+
+
+def render_responder_alert_page(accident, accidents=None):
+    return render_template(
+        'responder_alert.html',
+        acc=accident,
+        accidents=accidents or [],
+        me=session.get('user_email', 'Responder'),
+        **build_dashboard_context()
+    )
 
 
 # Dedicated action endpoints make alert transitions explicit, auditable, and easier to secure.
@@ -1045,6 +1352,21 @@ def respond_alert(accident_id):
 # A dedicated closure endpoint preserves the distinction between acknowledging and fully resolving an incident.
 def close_alert(accident_id):
     return close_alert_by_id(accident_id)
+
+
+@app.route('/responder/update-status', methods=['POST'], endpoint='responder_update_status')
+# Status updates from the responder detail page map onto the supported incident lifecycle.
+@responder_required
+def responder_update_status():
+    data = request.get_json() or {}
+    accident_id = data.get('id')
+    status = data.get('status')
+
+    if status in {'acknowledged', 'en_route', 'on_scene'}:
+        return update_responder_status_by_id(accident_id, status)
+    if status == 'resolved':
+        return update_responder_status_by_id(accident_id, status)
+    return jsonify({'success': False, 'error': 'Invalid responder status.'}), 400
 
 
 # The legacy dispatch endpoint remains for compatibility with older front-end interactions.
@@ -1088,7 +1410,7 @@ def mark_responded():
 @admin_required
 # Upload processing resets previous playback state so only one uploaded source drives detection at a time.
 def upload_video():
-    global current_video_path, video_active
+    global current_video_path, current_video_filename, video_active
 
     video_active = False
     time.sleep(0.3)
@@ -1107,6 +1429,7 @@ def upload_video():
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
     current_video_path = filepath
+    current_video_filename = filename
 
     return jsonify({'success': True, 'filename': filename})
 
@@ -1118,6 +1441,13 @@ def upload_video():
 def video_feed():
     return Response(generate_video_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+@app.route('/uploads/<path:filename>', endpoint='uploaded_file')
+@login_required
+# Uploaded evidence is served only to authenticated operators for preview and review.
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 
 # Live camera streaming has its own route because device-backed capture has distinct lifecycle and failure behavior.
@@ -1160,10 +1490,10 @@ def process_camera_frame():
         return jsonify({'success': False, 'error': 'Unable to decode frame'}), 400
 
     try:
-        processed, detected, auto_send_to_responder, detection_time_seconds = process_frame(frame)
+        processed, detected, auto_send_to_responder, detection_time_seconds, confidence = process_frame(frame)
 
         if detected:
-            try_save_snapshot(processed, auto_send_to_responder, detection_time_seconds)
+            try_save_snapshot(processed, confidence, auto_send_to_responder, detection_time_seconds)
 
         ok, buffer = cv2.imencode('.jpg', processed, ENCODE_PARAM)
         if not ok:
@@ -1173,6 +1503,8 @@ def process_camera_frame():
         return jsonify({
             'success': True,
             'detected': detected,
+            'confidence': confidence,
+            'confidence_label': format_confidence(confidence),
             'image': f'data:image/jpeg;base64,{encoded}'
         })
     except Exception as exc:

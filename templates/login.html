@@ -11,6 +11,9 @@
 <!-- The login page intentionally stays outside the dashboard shell to separate public access from protected operations. -->
 <body>
 
+<!-- =========================
+     1. Authentication Card
+     ========================= -->
 <div class="auth-page">
   <div class="auth-box fade-in">
 
@@ -46,9 +49,12 @@
         <button type="submit" class="btn btn-primary btn-block" style="margin-top:0.5rem;">Sign In</button>
       </form>
 
-      <p class="auth-switch">Don't have an account? <a href="#" onclick="toggleForm('signup')">Sign Up</a></p>
+      <p class="auth-switch">Don't have an account? <a href="{{ url_for('select_role') }}">Sign Up</a></p>
     </div>
 
+    <!-- =========================
+         2. Role-Based Registration Form
+         ========================= -->
     <div id="signupForm" class="auth-form-wrap hidden">
       <h2>Create Account</h2>
       <p class="auth-subtitle">Register to start using AcciVision</p>
@@ -67,13 +73,7 @@
           <label for="signup_confirm">Confirm Password</label>
           <input type="password" id="signup_confirm" name="confirm_password" placeholder="Confirm your password" required>
         </div>
-        <div class="form-group">
-          <label for="signup_role">Account Role</label>
-          <select id="signup_role" name="role" required>
-            <option value="admin">Admin</option>
-            <option value="responder">Responder</option>
-          </select>
-        </div>
+        <input type="hidden" name="role" value="{{ selected_role }}">
         <button type="submit" class="btn btn-primary btn-block" style="margin-top:0.5rem;">Create Account</button>
       </form>
 
@@ -83,6 +83,9 @@
   </div>
 </div>
 
+<!-- =========================
+     3. Role-Based Redirect Logic
+     ========================= -->
 <!-- Lightweight client behavior improves the authentication flow without moving trust decisions out of the backend. -->
 <script>
 function toggleForm(f) {

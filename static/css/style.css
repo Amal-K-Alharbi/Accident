@@ -545,16 +545,6 @@ a { text-decoration: none; color: inherit; }
   font-family: var(--font-m);
 }
 
-.conf-chip {
-  background: rgba(0,0,0,0.6);
-  color: #fbbf24;
-  font-size: 0.6rem;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: var(--font-m);
-}
-
 .alert-body {
   padding: 0.9rem 1.1rem;
   display: flex;
@@ -629,6 +619,104 @@ a { text-decoration: none; color: inherit; }
 
 .dispatch-tag.ok { color: #86efac; border-color: var(--green-border); background: var(--green-bg); }
 .dispatch-tag.warn { color: #fbbf24; border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.12); }
+
+/* =========================
+   3. Responder Alert Detail
+   ========================= */
+.responder-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.responder-preview-media {
+  min-height: 430px;
+  background: #000;
+  overflow: hidden;
+}
+
+.responder-preview-media img {
+  width: 100%;
+  height: 100%;
+  min-height: 430px;
+  object-fit: cover;
+  display: block;
+}
+
+.responder-status-box {
+  padding: 0.9rem 1rem;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  margin-bottom: 1rem;
+}
+
+.responder-status-value {
+  font-family: var(--font-h);
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--blue-text);
+  letter-spacing: 0.4px;
+}
+
+.responder-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.responder-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.responder-info-row:last-child { border-bottom: none; }
+
+.info-label {
+  color: var(--t3);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.info-value {
+  color: var(--t1);
+  font-size: 0.78rem;
+  text-align: right;
+}
+
+.info-value.mono {
+  font-family: var(--font-m);
+  color: var(--t2);
+}
+
+.responder-update-section {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.responder-update-section h3 {
+  font-family: var(--font-h);
+  font-size: 0.95rem;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.85rem;
+}
+
+.responder-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.responder-actions .btn {
+  justify-content: center;
+}
 
 /* ─── Empty State ─────────────────────────────── */
 .empty-state {
@@ -857,6 +945,101 @@ a { text-decoration: none; color: inherit; }
 .auth-switch a { color: var(--blue-text); }
 .auth-switch a:hover { text-decoration: underline; }
 
+/* =========================
+   1. Role Selection Page
+   ========================= */
+.role-page { align-items: flex-start; padding-top: 6vh; }
+
+.role-container {
+  width: min(100%, 860px);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  padding: 2.25rem;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+.role-brand {
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+
+.role-header {
+  text-align: center;
+  margin-bottom: 1.75rem;
+}
+
+.role-header h1 {
+  font-family: var(--font-h);
+  font-size: 1.65rem;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.35rem;
+}
+
+.role-header p {
+  color: var(--t3);
+  font-size: 0.78rem;
+}
+
+/* =========================
+   2. Role Cards Section
+   ========================= */
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.role-card {
+  min-height: 230px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 1.5rem;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  color: var(--t1);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.18s;
+}
+
+.role-card:hover {
+  border-color: var(--blue);
+  background: var(--card2);
+  box-shadow: 0 0 0 3px rgba(26,107,204,0.12);
+  transform: translateY(-2px);
+}
+
+.role-card .role-icon {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--blue-glow);
+  color: var(--blue-text);
+  border: 1px solid rgba(26,107,204,0.24);
+}
+
+.role-card-title {
+  font-family: var(--font-h);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.role-card-text {
+  max-width: 280px;
+  color: var(--t3);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
 /* ─── Buttons ─────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
@@ -924,6 +1107,239 @@ a { text-decoration: none; color: inherit; }
   z-index: 1000;
 }
 .toast.show { transform: translateY(0); opacity: 1; }
+
+/* =========================
+   4. Responder Case List
+   ========================= */
+.page-section-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.page-section-title h1,
+.detail-toolbar h1 {
+  font-family: var(--font-h);
+  font-size: 1.35rem;
+  letter-spacing: 0.5px;
+  color: var(--t1);
+}
+
+.page-section-title p,
+.detail-toolbar p {
+  color: var(--t3);
+  font-size: 0.76rem;
+}
+
+.responder-case-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.85rem;
+}
+
+.responder-case-card {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 1rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  padding: 1rem;
+  transition: border-color 0.18s, transform 0.18s;
+}
+
+.responder-case-card:hover {
+  border-color: var(--blue);
+  transform: translateY(-1px);
+}
+
+.case-summary {
+  min-width: 0;
+  flex: 1;
+}
+
+.case-id {
+  margin: 0.6rem 0;
+  font-family: var(--font-m);
+  font-size: 0.78rem;
+  color: var(--t1);
+}
+
+.case-meta-grid {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 0.4rem 0.75rem;
+  font-size: 0.72rem;
+}
+
+.case-meta-grid span {
+  color: var(--t3);
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.case-meta-grid strong {
+  min-width: 0;
+  color: var(--t2);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  background: var(--bg2);
+  color: var(--t2);
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.icon-btn:hover {
+  color: var(--blue-text);
+  border-color: var(--blue);
+  background: rgba(26,107,204,0.08);
+}
+
+.case-open-btn {
+  align-self: center;
+  flex-shrink: 0;
+}
+
+/* =========================
+   5. Responder Detail Workspace
+   ========================= */
+.detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.video-return-panel {
+  padding: 0.9rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg3);
+}
+
+.video-return-panel video {
+  width: 100%;
+  max-height: 260px;
+  margin-top: 0.75rem;
+  background: #000;
+  border-radius: var(--r);
+}
+
+/* =========================
+   6. Image Preview Modal
+   ========================= */
+.preview-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 4.5rem 1.25rem 1.25rem;
+  background: rgba(0,0,0,0.86);
+}
+
+.preview-modal.show {
+  display: flex;
+}
+
+.preview-modal img,
+.preview-modal video {
+  max-width: min(100%, 1120px);
+  max-height: calc(100vh - 7rem);
+  object-fit: contain;
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  background: #000;
+}
+
+.preview-modal-bar {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  right: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.thumb-preview-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: var(--r);
+  background: rgba(0,0,0,0.68);
+  color: #fff;
+  padding: 5px 9px;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+/* =========================
+   7. Responder Status Chart
+   ========================= */
+.responder-chart-panel {
+  margin-bottom: 1rem;
+}
+
+.status-chart {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem;
+}
+
+.status-bar-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.status-bar-label {
+  color: var(--t2);
+  font-size: 0.72rem;
+}
+
+.status-bar-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+}
+
+.status-bar-fill {
+  height: 100%;
+  min-width: 4px;
+  border-radius: 999px;
+}
+
+.status-pending { background: var(--amber); }
+.status-acknowledged { background: var(--blue-text); }
+.status-en_route { background: #38bdf8; }
+.status-on_scene { background: #a78bfa; }
+.status-resolved { background: var(--green); }
+
+.status-bar-count {
+  font-family: var(--font-m);
+  color: var(--t1);
+  text-align: right;
+}
 
 /* ─── Footer ──────────────────────────────────── */
 .footer {
@@ -1327,6 +1743,11 @@ body > .footer {
   .steps {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .role-grid,
+  .responder-detail-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1366,5 +1787,22 @@ body > .footer {
   .features-grid,
   .steps {
     grid-template-columns: 1fr;
+  }
+
+  .role-container {
+    padding: 1.5rem;
+  }
+
+  .role-card {
+    min-height: 190px;
+  }
+
+  .responder-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .responder-preview-media,
+  .responder-preview-media img {
+    min-height: 260px;
   }
 }

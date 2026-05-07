@@ -1,7 +1,6 @@
-<!-- Standards mode keeps the admin alert page rendering predictably across browsers. -->
+<!-- 1. Document Setup -->
 <!DOCTYPE html>
 <html lang="en">
-<!-- Shared metadata and styling align this operational screen with the rest of the authenticated interface. -->
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,12 +10,12 @@
 <body>
 <div class="app-shell">
 
-  <!-- Shared navigation keeps alert triage connected to dashboard-wide metrics and routes. -->
+  <!-- 2. Admin Sidebar -->
   {% include 'sidebar.html' %}
 
   <div class="main">
 
-    <!-- The top bar anchors page identity and exposes monitoring state without interrupting triage flow. -->
+    <!-- 3. Page Header -->
     <div class="topbar">
       <div class="topbar-left">
         <span class="topbar-title">Alert Management</span>
@@ -29,10 +28,10 @@
       </div>
     </div>
 
-    <!-- Main content swaps between empty, review, and active-response states based on live backend data. -->
+    <!-- 4. Alert Review Content -->
     <div class="page-content">
 
-      <!-- Emergency emphasis only appears when there is active workload requiring operator attention. -->
+      <!-- 5. Emergency Banner -->
       {% if accidents|length > 0 %}
       <div class="em-banner">
         <div class="em-left">
@@ -46,7 +45,7 @@
       </div>
       {% endif %}
 
-      <!-- The empty state avoids a blank admin screen and points operators back toward detection when no incidents exist. -->
+      <!-- 6. Empty State -->
       {% if accidents|length == 0 %}
       <div class="empty-state">
         <div class="empty-icon">O</div>
@@ -57,25 +56,27 @@
         {% endif %}
       </div>
       {% else %}
-      <!-- Alert cards are rendered from persisted records so page refreshes preserve the current operational queue. -->
+      <!-- 7. Alert Cards -->
       <div class="alerts-list">
-        <!-- Each card binds one stored incident to its own visual context and server-backed action controls. -->
         {% for acc in accidents %}
         <div class="alert-card {% if loop.first and acc.status == 'New' %}is-critical{% elif loop.index == 2 and acc.status == 'New' %}is-high{% endif %} fade-in" id="incident-{{ acc.id }}">
-          <!-- Evidence imagery provides immediate visual context before an admin decides whether to escalate or dismiss. -->
           <div class="alert-thumb">
             <img src="{{ url_for('static', filename='accidents/' + acc.image) }}" alt="Accident">
             <div class="alert-thumb-overlay">
               <span class="detection-chip">ACCIDENT</span>
-              <span class="conf-chip" id="incident-state-{{ acc.id }}">{{ acc.status | upper }}</span>
             </div>
+            <button class="thumb-preview-btn" type="button"
+              onclick="openPreview('{{ url_for('static', filename='accidents/' + acc.image) }}', '{{ url_for('uploaded_file', filename=acc.source_video) if acc.source_video else '' }}')">
+              Enlarge
+            </button>
           </div>
 
-          <!-- Card details combine severity, timing, narrative text, and actions in one review surface. -->
           <div class="alert-body">
             <div class="alert-top">
               <div class="alert-head-left">
-                {% if acc.status == 'Responded' %}
+                {% if acc.status == 'Closed' %}
+                <span class="severity-chip sev-low" id="incident-badge-{{ acc.id }}">Closed</span>
+                {% elif acc.status == 'Responded' %}
                 <span class="severity-chip sev-low" id="incident-badge-{{ acc.id }}">Responded</span>
                 {% elif acc.status == 'Active' %}
                 <span class="severity-chip sev-high" id="incident-badge-{{ acc.id }}">Active</span>
@@ -88,18 +89,16 @@
                 {% endif %}
 
                 <div class="alert-id">{{ acc.id | upper }}</div>
-                <div class="alert-location">
-                  {% if loop.first %}I-95 Northbound, MM 42
-                  {% elif loop.index == 2 %}Downtown Sector 4
-                  {% else %}Detected Zone{% endif %}
-                </div>
+                <div class="alert-location">{{ acc.location }}</div>
                 <div class="alert-desc" id="incident-desc-{{ acc.id }}">
-                  {% if acc.status == 'Responded' %}
-                  Responder has acknowledged this incident. Awaiting final close from the responder desk.
+                  {% if acc.response_status == 'resolved' %}
+                  Responder status is Resolved. Incident is closed from the responder desk.
+                  {% elif acc.status == 'Responded' %}
+                  Current responder status: {{ acc.response_status_label }}.
                   {% elif acc.status == 'Active' %}
-                  Incident reported to authorities and now available to responders as an active case.
+                  Incident reported to responders. Current responder status: {{ acc.response_status_label }}.
                   {% elif loop.first %}
-                  Multiple vehicle collision detected with possible fire
+                  Incident waiting for admin review.
                   {% elif loop.index == 2 %}
                   Pedestrian detected in restricted zone
                   {% else %}
@@ -110,13 +109,35 @@
 
               <div style="text-align:right;">
                 <div class="alert-elapsed">{{ acc.elapsed }}</div>
-                <div class="alert-elapsed-label">Time Elapsed</div>
+                <div class="alert-elapsed-label">Detected Time</div>
               </div>
             </div>
 
-            <!-- Footer controls expose the alert lifecycle transitions that update both dashboards and database state. -->
+            <!-- 8. Admin Review Actions -->
             <div class="alert-footer">
-              {% if acc.status == 'Responded' %}
+              <span class="dispatch-tag">
+                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Detected: {{ acc.date }}
+              </span>
+              <span class="dispatch-tag" id="assigned-responder-{{ acc.id }}">
+                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21a8 8 0 1 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+                Assigned: {{ acc.assigned_responder }}
+              </span>
+              <span class="dispatch-tag {% if acc.response_status == 'resolved' %}ok{% elif acc.response_status == 'pending' %}warn{% endif %}" id="responder-status-{{ acc.id }}">
+                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                Responder: {{ acc.response_status_label }}
+              </span>
+
+              {% if acc.status == 'Closed' %}
+              <span class="dispatch-tag ok" id="incident-status-tag-{{ acc.id }}">
+                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                Status: Closed
+              </span>
+              <span class="dispatch-tag ok">
+                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                Resolved by Responder
+              </span>
+              {% elif acc.status == 'Responded' %}
               <span class="dispatch-tag ok" id="incident-status-tag-{{ acc.id }}">
                 <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                 Status: Responded
@@ -150,16 +171,13 @@
                   id="report-action-{{ acc.id }}"
                   onclick="reportToResponder('{{ acc.id }}')"
                   {{ 'disabled' if acc.notified else '' }}>
-                  {% if acc.notified %}Sent to Responder{% else %}Report to Responder{% endif %}
+                  {% if acc.notified %}Sent to Responder{% else %}Approve and Send{% endif %}
                 </button>
                 <button class="btn btn-sm btn-outline"
                   id="false-alarm-action-{{ acc.id }}"
                   onclick="markFalseAlarm('{{ acc.id }}')"
                   {{ 'disabled' if acc.notified else '' }}>
                   False Alarm
-                </button>
-                <button class="btn btn-sm btn-outline" id="responder-state-{{ acc.id }}" disabled>
-                  {% if acc.status == 'Responded' %}Responded{% elif acc.status == 'Active' %}Awaiting Responder{% else %}New Incident{% endif %}
                 </button>
               </div>
             </div>
@@ -176,14 +194,28 @@
 
 </div>
 
-<!-- Toast feedback confirms asynchronous actions without forcing navigation away from the alert list. -->
+<!-- 9. Image and Video Preview Modal -->
+<div class="preview-modal" id="adminPreviewModal" aria-hidden="true">
+  <div class="preview-modal-bar">
+    <button class="icon-btn" type="button" onclick="closePreview()" aria-label="Close preview">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+    <button class="btn btn-sm btn-outline hidden" type="button" id="backToVideoBtn" onclick="showVideoPreview()">Back to Video Preview</button>
+  </div>
+  <img id="adminPreviewImage" src="" alt="Enlarged accident snapshot">
+  <video id="adminPreviewVideo" class="hidden" controls preload="metadata"></video>
+</div>
+
+<!-- 10. Toast Feedback -->
 <div id="toast" class="toast">
   <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
   <span id="toastMsg"></span>
 </div>
 
-<!-- Client helpers keep the card state synchronized with backend transitions after admin actions complete. -->
+<!-- 11. Admin Review and Preview Logic -->
 <script>
+let activePreviewVideo = '';
+
 function showToast(msg) {
   const t = document.getElementById('toast');
   document.getElementById('toastMsg').textContent = msg;
@@ -196,21 +228,22 @@ function updateBadgeCount(id, value) {
   if (node && typeof value === 'number') node.textContent = value;
 }
 
-function applyAdminIncidentState(id) {
-  const stateChip = document.getElementById(`incident-state-${id}`);
+function applyAdminIncidentState(id, data) {
   const badge = document.getElementById(`incident-badge-${id}`);
   const desc = document.getElementById(`incident-desc-${id}`);
   const statusTag = document.getElementById(`incident-status-tag-${id}`);
+  const assignedTag = document.getElementById(`assigned-responder-${id}`);
+  const responderTag = document.getElementById(`responder-status-${id}`);
   const reportBtn = document.getElementById(`report-action-${id}`);
   const falseAlarmBtn = document.getElementById(`false-alarm-action-${id}`);
-  const responderState = document.getElementById(`responder-state-${id}`);
 
-  if (stateChip) stateChip.textContent = 'ACTIVE';
   if (badge) {
     badge.textContent = 'Active';
     badge.className = 'severity-chip sev-high';
   }
-  if (desc) desc.textContent = 'Incident reported to authorities and now available to responders as an active case.';
+  if (desc) desc.textContent = `Incident reported to responders. Current responder status: ${data.response_status_label || 'Pending'}.`;
+  if (assignedTag) assignedTag.innerHTML = '<svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21a8 8 0 1 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>Assigned: ' + (data.assigned_responder || 'Responder Team');
+  if (responderTag) responderTag.innerHTML = '<svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Responder: ' + (data.response_status_label || 'Pending');
   if (statusTag) {
     statusTag.className = 'dispatch-tag ok';
     statusTag.innerHTML = '<svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Status: Active';
@@ -221,7 +254,38 @@ function applyAdminIncidentState(id) {
     reportBtn.disabled = true;
   }
   if (falseAlarmBtn) falseAlarmBtn.disabled = true;
-  if (responderState) responderState.textContent = 'Awaiting Responder';
+}
+
+function openPreview(imageUrl, videoUrl) {
+  activePreviewVideo = videoUrl || '';
+  const modal = document.getElementById('adminPreviewModal');
+  const image = document.getElementById('adminPreviewImage');
+  const video = document.getElementById('adminPreviewVideo');
+  const backBtn = document.getElementById('backToVideoBtn');
+
+  image.src = imageUrl;
+  image.classList.remove('hidden');
+  video.classList.add('hidden');
+  video.pause();
+  video.removeAttribute('src');
+  backBtn.classList.toggle('hidden', !activePreviewVideo);
+  modal.classList.add('show');
+}
+
+function showVideoPreview() {
+  if (!activePreviewVideo) return;
+  const image = document.getElementById('adminPreviewImage');
+  const video = document.getElementById('adminPreviewVideo');
+  image.classList.add('hidden');
+  video.src = activePreviewVideo;
+  video.classList.remove('hidden');
+}
+
+function closePreview() {
+  const modal = document.getElementById('adminPreviewModal');
+  const video = document.getElementById('adminPreviewVideo');
+  video.pause();
+  modal.classList.remove('show');
 }
 
 function removeIncidentCard(id) {
@@ -241,7 +305,7 @@ async function reportToResponder(id) {
     }
 
     updateBadgeCount('activeAlertsBadge', data.active_alerts_count);
-    applyAdminIncidentState(id);
+    applyAdminIncidentState(id, data);
     showToast(data.message || 'Accident referred to the responder team');
   } catch (e) {
     console.error(e);
