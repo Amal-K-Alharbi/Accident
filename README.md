@@ -1,240 +1,208 @@
-# AcciVision — Traffic Accident Detection System
+# AcciVision - Traffic Accident Detection System
 
-## Project Overview
+## 1. Project Overview
 
-### Purpose
-**AcciVision** is a real-time accident detection and alert management system that uses computer vision to automatically identify accidents in video streams (from cameras or uploaded files) and orchestrate a response workflow for operators and responders.
+AcciVision is a traffic accident detection and alert management web system. It uses a YOLOv8 model to analyze uploaded videos and camera frames, detect traffic accidents, save accident evidence, and route alerts to the correct user role.
 
-### Problem Solved
-- **Manual monitoring is inefficient**: Security personnel cannot watch multiple video feeds continuously.
-- **Slow response to accidents**: Delayed detection leads to worse outcomes.
-- **No automated evidence capture**: Important for insurance and legal processes.
-- **Disconnected workflows**: Detection, alerting, and response are typically siloed.
+The backend is built with Flask. The frontend uses HTML, CSS, and JavaScript templates. The system supports two main roles:
 
-AcciVision automates detection, captures evidence, and provides a unified dashboard for admins and responders to manage the incident lifecycle.
+- Admin: manages detection, reviews alerts, and sends confirmed alerts to responders.
+- Responder: receives assigned alerts and updates the response status until the case is resolved.
 
----
+## 2. Main Features
 
-## Technology Stack
+- User registration and login
+- Role selection for Admin and Responder accounts
+- Admin dashboard
+- Responder dashboard
+- Accident detection from uploaded video
+- Accident detection from browser camera frames
+- YOLOv8 accident detection model
+- Alert creation and management
+- Admin review for medium-confidence accidents
+- Direct responder alert for high-confidence accidents
+- Responder status updates
+- Accident image and video preview
+- SQLite database storage
+- Password hashing with Werkzeug security utilities
 
-| Layer | Technology |
-|-------|------------|
-| **Backend** | Flask (Python web framework) |
-| **ML Model** | YOLOv8 (Ultralytics) — trained on custom accident dataset |
-| **Database** | SQLite (lightweight, file-based) |
-| **Computer Vision** | OpenCV (`cv2`) |
-| **Frontend** | HTML5, CSS3, Vanilla JavaScript |
-| **Deployment** | Local/Windows (uses `CAP_DSHOW` for camera) |
+## 3. How Accident Detection Works
 
----
+The detection model is loaded from `best.pt`, and class labels are loaded from `coco.txt`.
 
-## System Workflow
+The system processes video or camera frames with YOLOv8. When the detected class is `accident`, the backend checks the model confidence internally and applies the following rules:
 
-```
-┌─────────────┐    ┌──────────────┐    ┌─────────────────┐    ┌─────────────┐
-│   Input     │───▶│  Processing  │───▶│   Decision      │───▶│   Output    │
-│ (Camera/    │    │ (YOLO        │    │ (Confidence     │    │ (Alert/     │
-│  Video)     │    │  Inference)  │    │  Threshold)     │    │  Dashboard) │
-└─────────────┘    └──────────────┘    └─────────────────┘    └─────────────┘
-```
+- Below 50% confidence: no confirmed accident alert is created.
+- 50% to below 80% confidence: an alert is created for admin review.
+- 80% confidence or above: the alert is sent directly to responders.
 
-### Step-by-Step Flow
+The confidence value is used only inside the backend for routing decisions. It is hidden from the web interface.
 
-1. **Input Source**
-   - Live camera feed (webcam or IP camera via OpenCV)
-   - Uploaded video file (MP4, AVI, MOV, MKV, WMV, WebM)
+The model inference time is measured around the YOLO prediction step only. Upload time, page loading time, database saving time, and notification handling are not included in that timing. The measured value is stored in the accident record as `detection_time_seconds`.
 
-2. **Frame Extraction**
-   - Videos are read frame-by-frame using OpenCV
-   - Frame skipping (`FRAME_SKIP_INTERVAL = 2`) reduces processing load
+## 4. Alert Workflow
 
-3. **Preprocessing**
-   - Frame resized to 1020×500 for consistent input
-   - Converted to numpy array for YOLO inference
+Admins can review accident alerts, inspect the available accident image or source video preview, and decide how to handle each case.
 
-4. **Model Inference**
-   - YOLOv8 model (best.pt) processes each frame
-   - Input size: 640×640 (`MODEL_INPUT_SIZE`)
-   - Output: bounding boxes, confidence scores, class IDs
+Admin actions:
 
-5. **Post-Processing**
-   - Filter detections by class (only "accident" triggers alert)
-   - Draw bounding boxes on frame for visualization
-   - Add overlay warning text when accident detected
+- Approve and send an alert to the responder dashboard
+- Mark an alert as a false alarm
+- Monitor responder progress from the alert management page
 
-6. **Alert Decision**
-   - If `confidence >= 0.80` → **auto-send to responder**
-   - Otherwise → save as "new" alert for admin review
+Responder actions:
 
-7. **Evidence Capture**
-   - Snapshot saved to accidents
-   - Record inserted into SQLite database
-   - Throttled to once per 30 seconds to avoid duplicates
+- View assigned alerts
+- Open alert details
+- Preview the accident image or video
+- Update the case status
 
-8. **Dashboard & Response**
-   - Admin views all active alerts → can report, mark false alarm, or close
-   - Responder sees only dispatched alerts → can acknowledge and close
+Supported responder statuses:
 
----
+- Pending
+- Acknowledged
+- En Route
+- On Scene
+- Resolved
 
-## Component Breakdown
+## 5. Dashboard Explanation
 
-### 1. Backend Application (app.py)
+### Admin Dashboard
 
-| Component | Purpose |
-|-----------|---------|
-| **Model Loading** | `YOLO(MODEL_PATH)` — loaded once at startup |
-| **Database Schema** | `users` table (auth), `accidents` table (evidence) |
-| **Authentication** | SHA-256 password hashing, session-based auth |
-| **Role System** | `admin` (full access), `responder` (limited access) |
-| **Streaming Endpoints** | `/video_feed`, `/camera_feed` — MJPEG streams |
-| **API Endpoints** | `/report_alert`, `/respond_alert`, `/close_alert`, `/false_alarm` |
+The admin dashboard shows system statistics, including:
 
-**Key Functions:**
-- `process_frame(frame)` — runs YOLO inference, draws boxes, returns detection result
-- `try_save_snapshot()` — throttled background snapshot saver
-- `build_dashboard_context()` — aggregates metrics for UI
+- Active alerts
+- Camera availability
+- Today's cases
+- Average model detection time
+- Recent events
 
-### 2. Frontend Templates
+The average detection card represents the average YOLO model inference time for saved detections. It does not represent human responder response time.
 
-| Template | Purpose |
-|----------|---------|
-| `intro.html` | Public landing page |
-| `login.html` | Sign in / Sign up with role selection |
-| home.html | Admin dashboard with stats cards |
-| detect.html | Live detection workspace (upload/video/camera) |
-| alerts.html | Admin alert management list |
-| `respond.html` | Responder-only alert queue |
-| `sidebar.html` | Shared navigation component |
+### Responder Dashboard
 
-### 3. Styling (style.css)
+The responder dashboard shows responder-focused statistics and assigned work, including:
 
-- Dark theme with cyberpunk/command-center aesthetic
-- CSS variables for consistent theming
-- Responsive grid layout for dashboard cards
+- Active alerts
+- Today's cases
+- Assigned alerts
+- Pending alerts
+- A bar chart showing the number of alerts by response status
 
-### 4. Database Schema
+## 6. Project Structure
 
-```sql
--- Users table
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY,
-    email TEXT UNIQUE,
-    password TEXT,
-    role TEXT DEFAULT 'admin'
-);
-
--- Accidents table
-CREATE TABLE accidents (
-    id TEXT PRIMARY KEY,
-    image TEXT,
-    timestamp REAL,
-    notified INTEGER DEFAULT 0,
-    responded INTEGER DEFAULT 0,
-    closed INTEGER DEFAULT 0,
-    status TEXT,
-    sent_at REAL,
-    reported_at REAL,
-    responded_at REAL,
-    closed_at REAL,
-    detection_time_seconds REAL
-);
+```text
+accident_web/
+|-- app.py
+|-- accivision.db
+|-- best.pt
+|-- coco.txt
+|-- requirements.txt
+|-- README.md
+|-- static/
+|   |-- accidents/
+|   |   `-- accident_*.jpg
+|   |-- assets/
+|   |   `-- warning.mp3
+|   `-- css/
+|       `-- style.css
+|-- templates/
+|   |-- alerts.html
+|   |-- detect.html
+|   |-- home.html
+|   |-- intro.html
+|   |-- login.html
+|   |-- respond.html
+|   |-- responder_alert.html
+|   |-- select_role.html
+|   `-- sidebar.html
+`-- uploads/
+    `-- uploaded video files
 ```
 
----
+## 7. Technologies Used
 
-## Machine Learning Model Details
+- Python
+- Flask
+- YOLOv8 / Ultralytics
+- OpenCV
+- SQLite
+- HTML
+- CSS
+- JavaScript
+- Werkzeug password hashing
 
-### Model: YOLOv8 (Custom Trained)
+## 8. Installation and Setup
 
-| Property | Value |
-|----------|-------|
-| **Architecture** | YOLOv8n (nano) — lightweight |
-| **Input Size** | 640×640 pixels |
-| **Classes** | `accident`, `cars` (from coco.txt) |
-| **Weights File** | best.pt |
+1. Clone the project.
 
-### How It Works (Simplified)
-
-1. **Input**: A video frame (RGB image, ~500×1020 pixels)
-2. **Preprocessing**: Resized to 640×640, normalized
-3. **Inference**: The neural network outputs:
-   - Bounding boxes (x1, y1, x2, y2)
-   - Confidence score (0.0–1.0)
-   - Class ID (0=accident, 1=cars)
-4. **Post-processing**:
-   - Filter by confidence threshold
-   - If class="accident" and conf ≥ 0.80 → auto-escalate
-   - Otherwise → mark as "new" for manual review
-
-### Prediction Output
-
-```python
-# Example output from process_frame()
-{
-    'frame': <annotated numpy array>,
-    'accident_detected': True,
-    'auto_send_to_responder': True,  # conf >= 0.80
-    'detection_time_seconds': 0.045  # inference latency
-}
+```bash
+git clone <repository-url>
+cd accident_web
 ```
 
----
+2. Create a virtual environment.
 
-## Key Features
+```bash
+python -m venv accident_env
+```
 
-### Strengths
+3. Activate the virtual environment on Windows.
 
-| Feature | Benefit |
-|---------|---------|
-| **Real-time streaming** | MJPEG feeds via Flask Response — no WebSocket needed |
-| **Auto-escalation** | High-confidence detections automatically sent to responders |
-| **Role-based access** | Admins see all; responders see only dispatched cases |
-| **Evidence persistence** | Snapshots stored as JPEG, records in SQLite |
-| **Performance optimization** | Frame skipping, throttled snapshots, cached camera discovery |
-| **Background processing** | Snapshot saving runs in daemon thread — never blocks video |
+```bash
+accident_env\Scripts\activate
+```
 
-### Possible Improvements
+4. Install dependencies.
 
-| Area | Suggestion |
-|------|------------|
-| **Performance** | Use GPU inference (`device='cuda'`) for lower latency |
-| **Scalability** | Replace SQLite with PostgreSQL for multi-user concurrent writes |
-| **Reliability** | Add model hot-reload without restarting Flask |
-| **Monitoring** | Add Prometheus metrics for detection latency, alert volume |
-| **Security** | Add rate limiting on auth endpoints, CSRF protection |
-| **Mobile** | Add PWA manifest for offline-capable mobile dashboard |
-| **Alerting** | Integrate Twilio/SMTP for push notifications to responders |
+```bash
+pip install -r requirements.txt
+```
 
----
+5. Run the Flask application.
 
-## API Routes Summary
+```bash
+python app.py
+```
 
-| Route | Method | Role | Description |
-|-------|--------|------|--------------|
-| `/` | GET | Public | Intro page |
-| `/login` | GET/POST | Public | Auth entry |
-| `/logout` | GET | Auth | Session end |
-| `/dashboard` | GET | Admin | Stats overview |
-| `/detect` | GET | Admin | Detection workspace |
-| `/alerts` | GET | Auth | Alert list (role-filtered) |
-| `/upload` | POST | Admin | Video upload handler |
-| `/video_feed` | GET | Admin | MJPEG stream |
-| `/camera_feed` | GET | Admin | Live camera stream |
-| `/report_alert/<id>` | POST | Admin | Send to responder |
-| `/respond_alert/<id>` | POST | Responder | Acknowledge |
-| `/close_alert/<id>` | POST | Responder | Resolve |
-| `/false_alarm/<id>` | POST | Admin | Dismiss |
+6. Open the local Flask server in your browser.
 
----
+```text
+http://127.0.0.1:5000
+```
 
-## Summary
+The app runs on the configured Flask port in `app.py`.
 
-AcciVision is an accident detection system that:
+## 9. Security Notes
 
-1. **Detects** accidents in real time using YOLOv8
-2. **Captures** evidence automatically with throttled snapshots
-3. **Alerts** operators via a dashboard with role-based views
-4. **Tracks** the full incident lifecycle (new → sent → responded → closed)
-5. **Streams** processed video frames to the browser without complex infrastructure
+- Passwords are hashed before being stored in the database.
+- New passwords use Werkzeug password hashing.
+- Plain-text passwords should not be stored.
+- Legacy password values should be upgraded safely only after a successful login.
+- Passwords should not be printed in logs or displayed in frontend pages.
+- Confidence values are used internally for alert routing and hidden from the UI.
+- Sensitive configuration values should stay out of frontend files.
+- For production deployment, use a secure secret key, HTTPS, CSRF protection, and a production WSGI server.
 
+## 10. System Workflow
+
+1. User opens the system.
+2. User selects a role.
+3. User registers or logs in.
+4. Admin uploads a video or uses camera detection.
+5. YOLOv8 analyzes frames.
+6. The backend checks the detected class and confidence thresholds.
+7. An alert is created if the accident meets the required threshold.
+8. Medium-confidence alerts go to the admin for review.
+9. High-confidence alerts go directly to responders.
+10. Responder views assigned alerts.
+11. Responder updates the case status until it is resolved.
+
+## 11. Notes and Limitations
+
+- Detection quality depends on the accuracy of `best.pt`.
+- Low-confidence accidents below 50% are not saved as alerts.
+- Snapshot saving is throttled by cooldown logic to reduce duplicate records.
+- Camera support depends on browser permissions and local device availability.
+- SQLite is suitable for local development and project demonstrations, but larger deployments may need a production database.
+- This system is intended for academic or project demonstration unless deployed with production-grade security settings.
