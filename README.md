@@ -1,95 +1,171 @@
-# AcciVision - Traffic Accident Detection System
+# 🚦 AcciVision — Traffic Accident Detection System
 
-## 1. Project Overview
+**AcciVision** is a web-based AI system that detects traffic accidents from uploaded videos and camera frames, then routes alerts through an admin and responder workflow.
 
-AcciVision is a traffic accident detection and alert management web system. It uses a YOLOv8 model to analyze uploaded videos and camera frames, detect traffic accidents, save accident evidence, and route alerts to the correct user role.
+![Python](https://img.shields.io/badge/Python-3.x-blue)
+![Flask](https://img.shields.io/badge/Flask-Backend-black)
+![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-purple)
+![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-green)
+![SQLite](https://img.shields.io/badge/SQLite-Database-lightgrey)
+![HTML/CSS/JS](https://img.shields.io/badge/HTML%2FCSS%2FJS-Frontend-orange)
 
-The backend is built with Flask. The frontend uses HTML, CSS, and JavaScript templates. The system supports two main roles:
+---
 
-- Admin: manages detection, reviews alerts, and sends confirmed alerts to responders.
-- Responder: receives assigned alerts and updates the response status until the case is resolved.
+## 📌 Project Overview
 
-## 2. Main Features
+AcciVision uses a YOLOv8 model to analyze traffic video frames and identify accident events. It is built with **Flask** for the backend and **HTML, CSS, and JavaScript** for the frontend.
 
-- User registration and login
-- Role selection for Admin and Responder accounts
-- Admin dashboard
-- Responder dashboard
-- Accident detection from uploaded video
-- Accident detection from browser camera frames
-- YOLOv8 accident detection model
-- Alert creation and management
-- Admin review for medium-confidence accidents
-- Direct responder alert for high-confidence accidents
-- Responder status updates
-- Accident image and video preview
-- SQLite database storage
-- Password hashing with Werkzeug security utilities
+The system supports two main roles:
 
-## 3. How Accident Detection Works
+- **Admin**: runs detection, reviews incidents, approves or rejects alerts, and monitors system activity.
+- **Responder**: receives assigned alerts, views case details, and updates the response status until the case is resolved.
 
-The detection model is loaded from `best.pt`, and class labels are loaded from `coco.txt`.
+---
 
-The system processes video or camera frames with YOLOv8. When the detected class is `accident`, the backend checks the model confidence internally and applies the following rules:
+## 👥 System Roles
 
-- Below 50% confidence: no confirmed accident alert is created.
-- 50% to below 80% confidence: an alert is created for admin review.
-- 80% confidence or above: the alert is sent directly to responders.
+| Role | Main Permissions |
+|------|------------------|
+| Admin | Upload video, run detection, review alerts, approve/reject alerts, view dashboard |
+| Responder | View assigned alerts, update response status, resolve cases |
 
-The confidence value is used only inside the backend for routing decisions. It is hidden from the web interface.
+---
 
-The model inference time is measured around the YOLO prediction step only. Upload time, page loading time, database saving time, and notification handling are not included in that timing. The measured value is stored in the accident record as `detection_time_seconds`.
+## 🧰 Technologies Used
 
-## 4. Alert Workflow
+| Layer | Technology |
+|------|------------|
+| Backend | Flask / Python |
+| AI Model | YOLOv8 / Ultralytics |
+| Computer Vision | OpenCV |
+| Database | SQLite |
+| Frontend | HTML, CSS, JavaScript |
+| Security | Werkzeug Password Hashing |
 
-Admins can review accident alerts, inspect the available accident image or source video preview, and decide how to handle each case.
+---
 
-Admin actions:
+## 🤖 How the AI Model Works
 
-- Approve and send an alert to the responder dashboard
-- Mark an alert as a false alarm
-- Monitor responder progress from the alert management page
+- The YOLOv8 model is loaded from `best.pt`.
+- Class labels are loaded from `coco.txt`.
+- Frames are extracted from an uploaded video or browser camera input.
+- Each frame is processed using YOLOv8.
+- The system checks whether the detected class is `accident`.
+- Confidence is used internally to decide alert routing.
+- Confidence values are hidden from the web interface.
 
-Responder actions:
+```text
+Camera / Video
+     |
+     v
+Frame Extraction
+     |
+     v
+YOLOv8 Model Prediction
+     |
+     v
+Class Detection: accident / cars
+     |
+     v
+Confidence-Based Decision
+     |
+     v
+Admin Review or Responder Alert
+```
 
-- View assigned alerts
-- Open alert details
-- Preview the accident image or video
-- Update the case status
+---
 
-Supported responder statuses:
+## 🧠 Accident Decision Logic
 
-- Pending
-- Acknowledged
-- En Route
-- On Scene
-- Resolved
+| Model Result | Confidence Range | System Action |
+|-------------|------------------|---------------|
+| Not accident / cars | Any | No alert |
+| Accident | Less than 50% | No alert |
+| Accident | 50% to less than 80% | Send to Admin Review |
+| Accident | 80% or higher | Send directly to Responder |
 
-## 5. Dashboard Explanation
+> Confidence is used only inside the backend routing logic and is not shown in the user interface.
 
-### Admin Dashboard
+---
 
-The admin dashboard shows system statistics, including:
+## 🚨 Alert Workflow
+
+```text
+Accident Detected
+   |
+   v
+Check Confidence
+   |
+   +-- 50% - 79% --> Admin Review
+   |                  |
+   |                  +-- Admin Approves --> Sent to Responder
+   |                  |
+   |                  `-- Admin Rejects  --> Marked as False Alarm
+   |
+   `-- 80%+ --------> Sent Directly to Responder
+                         |
+                         v
+                 Responder Updates Status
+                         |
+                         v
+                      Resolved
+```
+
+---
+
+## 📊 Dashboard Explanation
+
+### 🛠️ Admin Dashboard
+
+The admin dashboard provides a system-level overview:
 
 - Active alerts
-- Camera availability
-- Today's cases
+- Today’s cases
 - Average model detection time
-- Recent events
+- Alert statistics and recent events
 
-The average detection card represents the average YOLO model inference time for saved detections. It does not represent human responder response time.
+The average model detection time is based on YOLO inference timing, not human responder response time.
 
-### Responder Dashboard
+### 🚑 Responder Dashboard
 
-The responder dashboard shows responder-focused statistics and assigned work, including:
+The responder dashboard focuses on assigned cases:
 
 - Active alerts
-- Today's cases
-- Assigned alerts
-- Pending alerts
-- A bar chart showing the number of alerts by response status
+- Today’s cases
+- Response status bar chart
+- Assigned accident cases
 
-## 6. Project Structure
+---
+
+## 🔄 Response Status Lifecycle
+
+| Status | Meaning |
+|--------|---------|
+| Pending | Alert is waiting for responder action |
+| Acknowledged | Responder has seen the alert |
+| En Route | Responder is on the way |
+| On Scene | Responder arrived at the location |
+| Resolved | Case has been completed |
+
+---
+
+## ✨ Main Features
+
+| Feature | Description |
+|---------|-------------|
+| Authentication | User registration and login with hashed passwords |
+| Role Selection | Admin and Responder workflows |
+| Detection Input | Uploaded video and browser camera frame processing |
+| AI Detection | YOLOv8 accident detection from `best.pt` |
+| Alert Routing | Internal confidence-based routing |
+| Admin Review | Medium-confidence alerts can be approved or rejected |
+| Responder Flow | Responders update status from Pending to Resolved |
+| Evidence Preview | Accident image and uploaded video preview |
+| Storage | SQLite database and saved accident snapshots |
+
+---
+
+## 📁 Project Structure
 
 ```text
 accident_web/
@@ -99,13 +175,7 @@ accident_web/
 |-- coco.txt
 |-- requirements.txt
 |-- README.md
-|-- static/
-|   |-- accidents/
-|   |   `-- accident_*.jpg
-|   |-- assets/
-|   |   `-- warning.mp3
-|   `-- css/
-|       `-- style.css
+|
 |-- templates/
 |   |-- alerts.html
 |   |-- detect.html
@@ -116,93 +186,94 @@ accident_web/
 |   |-- responder_alert.html
 |   |-- select_role.html
 |   `-- sidebar.html
+|
+|-- static/
+|   |-- assets/
+|   |   `-- warning.mp3
+|   |-- css/
+|   |   `-- style.css
+|   `-- accidents/
+|       `-- accident_*.jpg
+|
 `-- uploads/
     `-- uploaded video files
 ```
 
-## 7. Technologies Used
+---
 
-- Python
-- Flask
-- YOLOv8 / Ultralytics
-- OpenCV
-- SQLite
-- HTML
-- CSS
-- JavaScript
-- Werkzeug password hashing
+## ⚙️ Installation and Setup
 
-## 8. Installation and Setup
-
-1. Clone the project.
+1. Clone the project and enter the folder.
 
 ```bash
 git clone <repository-url>
 cd accident_web
 ```
 
-2. Create a virtual environment.
+2. Create and activate a virtual environment.
 
 ```bash
 python -m venv accident_env
-```
-
-3. Activate the virtual environment on Windows.
-
-```bash
 accident_env\Scripts\activate
 ```
 
-4. Install dependencies.
+3. Install dependencies.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-5. Run the Flask application.
+4. Run the Flask application.
 
 ```bash
 python app.py
 ```
 
-6. Open the local Flask server in your browser.
+5. Open the local server in your browser.
 
 ```text
 http://127.0.0.1:5000
 ```
 
-The app runs on the configured Flask port in `app.py`.
+The app runs on the Flask port configured in `app.py`.
 
-## 9. Security Notes
+---
 
-- Passwords are hashed before being stored in the database.
-- New passwords use Werkzeug password hashing.
-- Plain-text passwords should not be stored.
-- Legacy password values should be upgraded safely only after a successful login.
-- Passwords should not be printed in logs or displayed in frontend pages.
-- Confidence values are used internally for alert routing and hidden from the UI.
-- Sensitive configuration values should stay out of frontend files.
-- For production deployment, use a secure secret key, HTTPS, CSRF protection, and a production WSGI server.
+## 🔐 Security Notes
 
-## 10. System Workflow
+- Passwords are hashed before being stored.
+- Plain-text passwords should not be stored in the database.
+- Passwords should not be printed in logs or exposed in frontend pages.
+- Confidence values are used internally and hidden from the UI.
+- Sensitive configuration should remain outside frontend files.
+- Production deployment should use HTTPS, a secure secret key, CSRF protection, and a production WSGI server.
 
-1. User opens the system.
-2. User selects a role.
-3. User registers or logs in.
-4. Admin uploads a video or uses camera detection.
-5. YOLOv8 analyzes frames.
-6. The backend checks the detected class and confidence thresholds.
-7. An alert is created if the accident meets the required threshold.
-8. Medium-confidence alerts go to the admin for review.
-9. High-confidence alerts go directly to responders.
-10. Responder views assigned alerts.
-11. Responder updates the case status until it is resolved.
+---
 
-## 11. Notes and Limitations
+## 🧭 System Workflow
 
-- Detection quality depends on the accuracy of `best.pt`.
-- Low-confidence accidents below 50% are not saved as alerts.
-- Snapshot saving is throttled by cooldown logic to reduce duplicate records.
-- Camera support depends on browser permissions and local device availability.
-- SQLite is suitable for local development and project demonstrations, but larger deployments may need a production database.
-- This system is intended for academic or project demonstration unless deployed with production-grade security settings.
+| Step | Action |
+|------|--------|
+| 1 | User opens the system |
+| 2 | User selects Admin or Responder role |
+| 3 | User registers or logs in |
+| 4 | Admin uploads video or starts camera detection |
+| 5 | YOLOv8 analyzes frames |
+| 6 | Backend checks class and confidence thresholds |
+| 7 | Alert is created if the accident meets the required threshold |
+| 8 | Medium-confidence alerts go to Admin Review |
+| 9 | High-confidence alerts go directly to responders |
+| 10 | Responder updates the case status |
+| 11 | Case is marked Resolved |
+
+---
+
+## 📝 Notes and Limitations
+
+- Detection accuracy depends on the quality of `best.pt`.
+- Accidents below 50% confidence are not saved as alerts.
+- Snapshot saving is limited by cooldown logic to reduce duplicates.
+- Camera detection depends on browser permissions and device availability.
+- SQLite is suitable for local development and demonstration use.
+- This project should be hardened before production deployment.
+
