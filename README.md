@@ -1,6 +1,6 @@
 # 🚦 AcciVision — Traffic Accident Detection System
 
-**AcciVision** is a web-based AI system that detects traffic accidents from uploaded videos and camera frames, then routes alerts through an admin and responder workflow.
+**AcciVision** is a web-based AI accident detection system that analyzes uploaded videos and camera frames, identifies traffic accidents with YOLOv8, and routes alerts to admins or responders based on the detection result.
 
 ![Python](https://img.shields.io/badge/Python-3.x-blue)
 ![Flask](https://img.shields.io/badge/Flask-Backend-black)
@@ -13,12 +13,12 @@
 
 ## 📌 Project Overview
 
-AcciVision uses a YOLOv8 model to analyze traffic video frames and identify accident events. It is built with **Flask** for the backend and **HTML, CSS, and JavaScript** for the frontend.
+AcciVision helps detect and manage traffic accident cases through an AI-assisted workflow.
 
-The system supports two main roles:
-
-- **Admin**: runs detection, reviews incidents, approves or rejects alerts, and monitors system activity.
-- **Responder**: receives assigned alerts, views case details, and updates the response status until the case is resolved.
+- It uses a **YOLOv8** model to analyze frames from uploaded videos or browser camera input.
+- It uses **Flask** for backend routes, authentication, detection processing, and database storage.
+- It uses **HTML, CSS, and JavaScript** for the web interface.
+- It supports two operational roles: **Admin** and **Responder**.
 
 ---
 
@@ -44,47 +44,100 @@ The system supports two main roles:
 
 ---
 
-## 🤖 How the AI Model Works
+## 🤖 AI Model Overview
 
-- The YOLOv8 model is loaded from `best.pt`.
-- Class labels are loaded from `coco.txt`.
-- Frames are extracted from an uploaded video or browser camera input.
-- Each frame is processed using YOLOv8.
-- The system checks whether the detected class is `accident`.
-- Confidence is used internally to decide alert routing.
-- Confidence values are hidden from the web interface.
+AcciVision uses a custom YOLOv8 model for traffic accident detection.
+
+| Item | Current Project Value |
+|------|------------------------|
+| Model Type | YOLOv8 object detection model |
+| Model File | `best.pt` |
+| Labels File | `coco.txt` |
+| Input Sources | Uploaded video frames and browser camera frames |
+| Detected Classes Used by Project | `accident`, `cars` |
+| Main Alert Class | `accident` |
+
+The model analyzes each processed frame and returns object detections. The backend then checks the detected class and applies internal decision rules before creating or routing an alert.
+
+---
+
+## 🧠 How the Model Detects Accidents
+
+1. The system receives a video frame or camera frame.
+2. The frame is resized and prepared for model inference.
+3. YOLOv8 runs prediction on the frame.
+4. The model returns detected objects, class IDs, bounding boxes, and confidence values.
+5. The backend maps class IDs to labels from `coco.txt`.
+6. The backend checks whether the detected class is `accident`.
+7. If the detected class is `cars`, no accident alert is created.
+8. If the detected class is `accident`, the system applies internal confidence rules.
+9. Based on the confidence range, the alert is ignored, sent to admin review, or sent directly to responders.
 
 ```text
-Camera / Video
-     |
-     v
+Camera / Uploaded Video
+        |
+        v
 Frame Extraction
-     |
-     v
+        |
+        v
 YOLOv8 Model Prediction
-     |
-     v
-Class Detection: accident / cars
-     |
-     v
-Confidence-Based Decision
-     |
-     v
-Admin Review or Responder Alert
+        |
+        v
+Object Detection
+        |
+        v
+Class Check: accident or cars
+        |
+        v
+Confidence-Based Routing
+        |
+        v
+Admin Review / Responder Alert
 ```
 
 ---
 
-## 🧠 Accident Decision Logic
+## 🧾 Model Decision Logic
 
-| Model Result | Confidence Range | System Action |
-|-------------|------------------|---------------|
-| Not accident / cars | Any | No alert |
-| Accident | Less than 50% | No alert |
-| Accident | 50% to less than 80% | Send to Admin Review |
-| Accident | 80% or higher | Send directly to Responder |
+| Detected Class | Confidence Range | System Decision |
+|---------------|------------------|-----------------|
+| `cars` | Any value | No alert |
+| `accident` | Below 50% | No alert |
+| `accident` | 50% to below 80% | Send to Admin Review |
+| `accident` | 80% or above | Send directly to Responder |
 
-> Confidence is used only inside the backend routing logic and is not shown in the user interface.
+> Confidence is used only inside the backend logic and is not shown in the user interface.
+
+---
+
+## 📦 Model Inputs and Outputs
+
+| Item | Description |
+|------|-------------|
+| Input | Image/frame from camera or uploaded video |
+| Model | YOLOv8 custom trained model |
+| Model File | `best.pt` |
+| Labels File | `coco.txt` |
+| Output | Class name, bounding box, confidence value |
+| Main Class Used for Alerts | `accident` |
+
+---
+
+## ⚙️ Model Response Time
+
+The admin dashboard shows the **average model detection time**.
+
+This value measures how long the YOLOv8 model takes to run inference on frames that become saved detection records. It focuses on model prediction speed only.
+
+It does **not** mean:
+
+- Human responder response time
+- Page loading time
+- Video upload time
+- Database saving time
+- Alert notification time
+
+The timing is stored in the database as `detection_time_seconds` and displayed on the admin dashboard as a readable value such as `306ms` or `1.2s`.
 
 ---
 
@@ -117,18 +170,16 @@ Check Confidence
 
 ### 🛠️ Admin Dashboard
 
-The admin dashboard provides a system-level overview:
+The admin dashboard provides system-level monitoring:
 
 - Active alerts
 - Today’s cases
 - Average model detection time
 - Alert statistics and recent events
 
-The average model detection time is based on YOLO inference timing, not human responder response time.
-
 ### 🚑 Responder Dashboard
 
-The responder dashboard focuses on assigned cases:
+The responder dashboard focuses on active response work:
 
 - Active alerts
 - Today’s cases
@@ -239,14 +290,11 @@ The app runs on the Flask port configured in `app.py`.
 
 ---
 
-## 🔐 Security Notes
+## 🔐 Basic Security Note
 
-- Passwords are hashed before being stored.
-- Plain-text passwords should not be stored in the database.
-- Passwords should not be printed in logs or exposed in frontend pages.
-- Confidence values are used internally and hidden from the UI.
-- Sensitive configuration should remain outside frontend files.
-- Production deployment should use HTTPS, a secure secret key, CSRF protection, and a production WSGI server.
+- Passwords are hashed before storage.
+- Sensitive values should not be displayed in frontend pages.
+- Confidence values are used internally and hidden from users.
 
 ---
 
