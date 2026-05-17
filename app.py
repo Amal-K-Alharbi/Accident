@@ -61,6 +61,8 @@ camera_inventory_lock = threading.Lock()
 
 # Snapshot throttling prevents one sustained incident from generating excessive duplicate evidence.
 last_snapshot_time = 0
+accident_confirm_count = 0
+ACCIDENT_CONFIRM_FRAMES = 5
 
 # Encoding settings are fixed up front to keep frame streaming predictable under repeated load.
 ENCODE_PARAM = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
@@ -899,11 +901,18 @@ def save_snapshot_background(frame_copy, confidence=0.0, auto_send_to_responder=
 def process_frame(frame):
     # 1. Model Inference and Confidence Routing
     global accident_flag
+    global accident_confirm_count
 
-    frame = cv2.resize(frame, (1020, 500))
+    frame = cv2.resize(frame, (768, 432))
     inference_started_at = time.perf_counter()
 
-    results = model.predict(frame, verbose=False, imgsz=MODEL_INPUT_SIZE)
+    results = model.predict(
+        frame,
+        imgsz=512,
+        conf=0.45,
+        verbose=False
+    )
+
     detection_time_seconds = time.perf_counter() - inference_started_at
 
     boxes = results[0].boxes
@@ -920,43 +929,54 @@ def process_frame(frame):
 
             label = class_list[cls_id] if cls_id < len(class_list) else "Unknown"
 
-            if label == "accident":
+            if label == "accident" and conf > 0.70:
                 accident_detected = True
                 max_accident_confidence = max(max_accident_confidence, float(conf))
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 4)
                 cv2.putText(frame, f"ACCIDENT {conf:.0%}", (x1, y1 - 12),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
+
             else:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, f"{label} {conf:.0%}", (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
 
-    reviewable_accident = accident_detected and max_accident_confidence >= ADMIN_REVIEW_CONFIDENCE_THRESHOLD
+    # Multi-frame confirmation
+    if accident_detected and max_accident_confidence >= 0.55:
+        accident_confirm_count += 1
+    else:
+        accident_confirm_count = 0
+
+    reviewable_accident = (
+        accident_confirm_count >= ACCIDENT_CONFIRM_FRAMES
+        and max_accident_confidence >= ADMIN_REVIEW_CONFIDENCE_THRESHOLD
+    )
+
     auto_send_to_responder = max_accident_confidence >= AUTO_REPORT_CONFIDENCE_THRESHOLD
 
     if reviewable_accident:
         h, w = frame.shape[:2]
         overlay = frame.copy()
+
         cv2.rectangle(overlay, (0, 0), (w, 65), (0, 0, 180), -1)
         cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
 
         text = "ACCIDENT DETECTED - RESPONDER ALERT" if auto_send_to_responder else "ACCIDENT DETECTED - ADMIN REVIEW"
+
         font = cv2.FONT_HERSHEY_DUPLEX
         (tw, th), _ = cv2.getTextSize(text, font, 1.1, 2)
         cx = (w - tw) // 2
+
         cv2.putText(frame, text, (cx + 2, 44), font, 1.1, (0, 0, 0), 4, cv2.LINE_AA)
         cv2.putText(frame, text, (cx, 42), font, 1.1, (0, 255, 255), 2, cv2.LINE_AA)
 
         if int(time.time() * 3) % 2 == 0:
             cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), 5)
 
-        
         with accident_flag_lock:
             accident_flag = True
 
     return frame, reviewable_accident, auto_send_to_responder, detection_time_seconds, max_accident_confidence
-
-
 # Snapshot gating balances evidence retention against storage noise during sustained detections.
 def try_save_snapshot(frame, confidence=0.0, auto_send_to_responder=False, detection_time_seconds=None, source_video=None):
     # 1. Save One Snapshot Per Cooldown
@@ -974,43 +994,69 @@ def try_save_snapshot(frame, confidence=0.0, auto_send_to_responder=False, detec
 
 # Uploaded footage shares the same detection pipeline as live input so operator expectations stay consistent across sources.
 def generate_video_frames():
-    # 1. Uploaded Video Streaming
-    global current_video_path, video_active
+    global current_video_path, current_video_filename, video_active
 
     if not current_video_path or not os.path.exists(current_video_path):
         return
 
-    cap = cv2.VideoCapture(current_video_path)
+    video_path = current_video_path
+    cap = cv2.VideoCapture(video_path)
+
+    if not cap.isOpened():
+        print("Error opening video")
+        return
+
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
     video_active = True
     frame_count = 0
 
-    while video_active:
-        ret, frame = cap.read()
-        if not ret:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    try:
+        while video_active:
             ret, frame = cap.read()
+
             if not ret:
                 break
 
-        frame_count += 1
-        if frame_count % FRAME_SKIP_INTERVAL != 0:
-            continue
+            frame_count += 1
 
-        processed, detected, auto_send_to_responder, detection_time_seconds, confidence = process_frame(frame)
+            if frame_count % FRAME_SKIP_INTERVAL != 0:
+                continue
 
-       
-        if detected:
-            try_save_snapshot(processed, confidence, auto_send_to_responder, detection_time_seconds, current_video_filename)
+            processed, detected, auto_send_to_responder, detection_time_seconds, confidence = process_frame(frame)
 
-        _, buffer = cv2.imencode('.jpg', processed, ENCODE_PARAM)
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            if detected:
+                try_save_snapshot(
+                    processed,
+                    confidence,
+                    auto_send_to_responder,
+                    detection_time_seconds,
+                    current_video_filename
+                )
 
-    cap.release()
-    video_active = False
+            _, buffer = cv2.imencode('.jpg', processed, ENCODE_PARAM)
 
+            yield (
+                b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n'
+                + buffer.tobytes()
+                + b'\r\n'
+            )
 
+    finally:
+        cap.release()
+        video_active = False
+
+        if video_path and os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+                print("Uploaded video deleted after analysis.")
+            except Exception as e:
+                print("Error deleting uploaded video:", e)
+
+        if current_video_path == video_path:
+            current_video_path = None
+            current_video_filename = None
 # Camera streaming is separated from uploaded playback because device access and lifecycle rules differ.
 def generate_camera_frames():
     # 1. Live Camera Streaming
@@ -1514,12 +1560,22 @@ def process_camera_frame():
 # Explicit stop routes let the UI terminate long-running stream generators without restarting the app.
 @app.route('/stop_video', methods=['POST'])
 @admin_required
-# Uploaded playback shutdown is exposed independently because its lifecycle is separate from live camera capture.
 def stop_video():
-    global video_active
-    video_active = False
-    return jsonify({'success': True})
+    global video_active, current_video_path, current_video_filename
 
+    video_active = False
+
+    if current_video_path and os.path.exists(current_video_path):
+        try:
+            os.remove(current_video_path)
+            print("Video deleted successfully.")
+        except Exception as e:
+            print("Error deleting video:", e)
+
+    current_video_path = None
+    current_video_filename = None
+
+    return jsonify({'success': True})
 
 @app.route('/stop_camera', methods=['POST'])
 @admin_required
@@ -1546,5 +1602,8 @@ def accident_status():
 
 # Direct execution support keeps local development straightforward without affecting production deployment patterns.
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000,
+    app.run(debug=True, host='0.0.0.0', port=5001,
             use_reloader=False, threaded=True)
+
+
+
