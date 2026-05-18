@@ -1,68 +1,432 @@
-# AcciVision - Traffic Accident Detection System
+<div align="center">
 
-AcciVision is a Flask web application for detecting traffic accidents from uploaded video files or a browser camera feed. It uses a custom YOLOv8 model to analyze frames, save accident snapshots, and route alerts through an admin and responder workflow.
+# 🚦 AcciVision
 
-## Project Overview
+### AI-Powered Traffic Accident Detection & Response Dashboard
 
-The system provides a browser-based command center for accident detection and alert handling. Admin users can run the model on video sources, review detected incidents, and send valid alerts to responders. Responder users can view dispatched alerts, inspect evidence, update response progress, and resolve incidents.
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white">
+  <img alt="Flask" src="https://img.shields.io/badge/Flask-Web_App-000000?style=for-the-badge&logo=flask&logoColor=white">
+  <img alt="YOLOv8" src="https://img.shields.io/badge/YOLOv8-Ultralytics-6A5ACD?style=for-the-badge">
+  <img alt="OpenCV" src="https://img.shields.io/badge/OpenCV-Computer_Vision-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-Local_Database-003B57?style=for-the-badge&logo=sqlite&logoColor=white">
+</p>
 
-The current project is built as a single Flask application in `app.py`, with HTML templates in `templates/`, styling and saved accident images in `static/`, uploaded video storage in `uploads/`, and SQLite data stored in `accivision.db`.
+<p>
+  <img alt="Status" src="https://img.shields.io/badge/status-local_AI_system-success?style=flat-square">
+  <img alt="Roles" src="https://img.shields.io/badge/roles-admin_%7C_responder-blue?style=flat-square">
+  <img alt="Uploads" src="https://img.shields.io/badge/video_uploads-200MB_max-orange?style=flat-square">
+  <img alt="Database" src="https://img.shields.io/badge/storage-accivision.db-lightgrey?style=flat-square">
+</p>
 
-## Main Purpose
+AcciVision is a Flask-based accident monitoring system that runs a custom YOLO model on uploaded traffic videos or browser camera frames, saves accident snapshots, and routes incidents through an admin review and responder workflow.
 
-The main purpose of AcciVision is to reduce manual monitoring work by using computer vision to detect possible road accidents and create a simple alert workflow from detection to response.
+</div>
 
-## Key Features
+---
 
-| Feature | Description |
+## ✨ What This Project Does
+
+| Area | Current Implementation |
 | --- | --- |
-| Public intro page | Shows the AcciVision landing page before login. |
-| Authentication | Supports sign up, login, logout, sessions, and password hashing with Werkzeug. |
-| Role selection | Users register as either Admin / Operator or Responder. |
-| Admin dashboard | Shows active alerts, camera count, today events, average model detection time, and recent events. |
-| Video upload detection | Admin can upload MP4, AVI, MOV, MKV, WMV, or WebM files up to 200 MB. |
-| Browser camera detection | Admin can open the local browser camera and send frames for detection. |
-| YOLOv8 inference | Uses `best.pt` and labels from `coco.txt` to detect `accident` and `cars`. |
-| Accident snapshots | Saves detected accident images in `static/accidents/`. |
-| Audio warning | Plays `static/assets/warning.mp3` when an accident is detected. |
-| Admin alert review | Admin can approve alerts and send them to responders, or mark new alerts as false alarms. |
-| Responder dashboard | Shows assigned alerts and status counts. |
-| Responder detail page | Responders can view accident images/videos and update response status. |
-| SQLite persistence | Stores users, accident records, status fields, timing data, confidence, and source video name. |
+| 🎥 Detection input | Admin users can upload supported video files or open the device camera from the browser. |
+| 🧠 AI model | `best.pt` is loaded once at startup with Ultralytics YOLO and labels from `coco.txt`. |
+| 🖼️ Frame processing | Frames are resized, analyzed by YOLO, annotated with bounding boxes, and returned to the browser. |
+| 🚨 Alert signal | Accident detections set a server-side flag; the browser polls it and plays `warning.mp3`. |
+| 📸 Evidence | Detected accident frames are saved as JPEG snapshots in `static/accidents/`. |
+| 🗂️ Persistence | SQLite stores users, saved accident records, lifecycle status, responder status, and timestamps. |
+| 👤 Admin workflow | Admins run detection, review incidents, approve alerts, or mark false alarms. |
+| 🚑 Responder workflow | Responders see dispatched alerts, inspect evidence, update status, and resolve cases. |
 
-## User Roles and Workflow
+---
 
-| Role | Main Pages | Main Actions |
-| --- | --- | --- |
-| Admin / Operator | Dashboard, Alerts, Test Model | Upload video, run camera detection, review incidents, approve and send alerts, mark false alarms, monitor status. |
-| Responder | Responder Dashboard, Responder Alerts, Alert Details | View assigned cases, inspect saved evidence, update response status, resolve cases. |
+## 🧭 System Workflow
 
-### Typical Flow
+```mermaid
+flowchart LR
+    A[Public Intro] --> B[Role Selection]
+    B --> C[Admin Signup/Login]
+    B --> D[Responder Signup/Login]
 
-1. A user opens the app and logs in or chooses a role to register.
-2. An admin goes to **Test Model**.
-3. The admin uploads a supported video file or starts browser camera detection.
-4. The YOLOv8 model processes frames and draws detection boxes.
-5. If an accident is confirmed, the app saves a snapshot and creates an accident record.
-6. Confirmed accidents below the auto-dispatch threshold appear as new admin review alerts.
-7. High-confidence confirmed accidents are sent directly to the responder workflow.
-8. The admin can approve new alerts or mark them as false alarms.
-9. Responders view dispatched alerts and update progress.
-10. Responders mark the case as resolved when complete.
+    C --> E[Admin Dashboard]
+    E --> F[Test Model]
+    F --> G[Video Upload]
+    F --> H[Browser Camera]
+    G --> I[YOLO Frame Processing]
+    H --> I
+    I --> J{Accident label > 60%?}
+    J -- No --> K[Annotated Feed Continues]
+    J -- Yes --> L[Warning Overlay + Audio Flag]
+    L --> M[Snapshot Saved, throttled to 30s]
+    M --> N[New Accident Record]
+    N --> O[Admin Alerts]
+    O --> P[Approve and Send]
+    O --> Q[False Alarm]
+    P --> R[Responder Queue]
+    R --> S[Acknowledge / En Route / On Scene / Resolved]
+```
 
-## Technologies Used
+---
 
-| Layer | Technology |
+## 🏗️ Architecture
+
+```mermaid
+flowchart TB
+    subgraph Client[Browser UI]
+        Intro[intro.html]
+        Login[login.html]
+        AdminDash[home.html]
+        Detect[detect.html]
+        AdminAlerts[alerts.html]
+        ResponderDash[respond.html]
+        ResponderAlerts[responder_alert.html]
+    end
+
+    subgraph Flask[app.py]
+        Auth[Authentication + Role Guards]
+        Routes[Routes + JSON Actions]
+        Pipeline[process_frame Pipeline]
+        Streams[Video/Camera Streams]
+        Alerts[Alert State Transitions]
+        DBLayer[SQLite Helpers]
+    end
+
+    subgraph AI[Detection Assets]
+        Model[best.pt]
+        Labels[coco.txt]
+    end
+
+    subgraph Storage[Local Storage]
+        DB[(accivision.db)]
+        Uploads[uploads/]
+        Snapshots[static/accidents/]
+        Sound[static/assets/warning.mp3]
+    end
+
+    Client <--> Flask
+    Pipeline --> Model
+    Pipeline --> Labels
+    Routes <--> DBLayer
+    DBLayer <--> DB
+    Streams <--> Uploads
+    Pipeline --> Snapshots
+    Detect --> Sound
+```
+
+---
+
+## 🧠 Accident Detection Pipeline
+
+The core detection path lives in `process_frame(frame)` inside `app.py`.
+
+| Step | Code Behavior |
 | --- | --- |
-| Backend | Python, Flask |
-| AI / Detection | Ultralytics YOLOv8, custom `best.pt` model |
-| Computer Vision | OpenCV, NumPy |
-| Data | SQLite |
-| Frontend | HTML, CSS, JavaScript, Jinja templates |
-| Authentication | Flask sessions, Werkzeug password hashing |
-| Media | Multipart JPEG streams, browser camera frame uploads, saved JPEG snapshots |
+| 1. Normalize frame | Every processed frame is resized to `768 x 432`. |
+| 2. Run YOLO | `model.predict(frame, imgsz=512, conf=0.45, verbose=False)` runs inference. |
+| 3. Read detections | The app reads each YOLO box, confidence score, and class ID. |
+| 4. Resolve label | Class IDs are mapped through `coco.txt`, currently `accident` and `cars`. |
+| 5. Draw overlays | Accident boxes above `0.60` are red; all other detections are green. |
+| 6. Trigger warning | If an accident is detected, the frame gets a warning banner and `accident_flag = True`. |
+| 7. Save snapshot | Streaming routes call `try_save_snapshot(processed)` when detection is true. |
+| 8. Throttle evidence | Snapshots are saved at most once every `30` seconds. |
+| 9. Persist alert | A background thread writes the JPEG and inserts an `accidents` row. |
 
-Dependencies are listed in `requirements.txt`:
+```mermaid
+sequenceDiagram
+    participant Source as Video/Camera Frame
+    participant Flask as Flask Route
+    participant CV as process_frame()
+    participant YOLO as best.pt
+    participant UI as Browser UI
+    participant DB as SQLite
+
+    Source->>Flask: Frame received
+    Flask->>CV: Resize + process
+    CV->>YOLO: Predict imgsz=512, conf=0.45
+    YOLO-->>CV: Boxes, classes, scores
+    CV-->>Flask: Annotated frame + detected flag
+    Flask-->>UI: MJPEG frame or base64 JPEG
+    alt accident label confidence > 0.60
+        CV->>CV: Set accident_flag
+        Flask->>DB: Save snapshot record, throttled
+        UI->>Flask: Poll /accident_status
+        Flask-->>UI: accident=true once
+        UI->>UI: Play warning.mp3
+    end
+```
+
+### Detection Confidence Logic
+
+| Threshold | Meaning |
+| --- | --- |
+| `0.45` | YOLO prediction confidence threshold used by `model.predict(...)`. |
+| `> 0.60` | A detection is treated as an accident only when its label is `accident` and confidence is above 60%. |
+| 30 seconds | Snapshot throttle interval between saved accident images. |
+
+> Current code note: the database has `confidence`, `source_video`, and `detection_time_seconds` columns, but the active snapshot insert only stores `id`, `image`, `timestamp`, and `notified`. Therefore confidence and detection-time dashboard values may remain default/empty unless existing database rows already contain those fields.
+
+---
+
+## 🎥 Live Camera & Video Upload Workflows
+
+### Uploaded Video
+
+```mermaid
+flowchart TD
+    A[Admin opens Test Model] --> B[Selects or drags video]
+    B --> C[POST /upload]
+    C --> D[Validate extension + 200 MB Flask limit]
+    D --> E[Save file in uploads/]
+    E --> F[Browser loads /video_feed]
+    F --> G[OpenCV reads frames]
+    G --> H[process_frame()]
+    H --> I[Stream annotated JPEG frames]
+    I --> J[Delete uploaded file after analysis or stop]
+```
+
+Supported upload extensions:
+
+`mp4`, `avi`, `mov`, `mkv`, `wmv`, `webm`
+
+### Browser Camera
+
+```mermaid
+flowchart TD
+    A[Admin clicks Open Camera] --> B[navigator.mediaDevices.getUserMedia]
+    B --> C[Browser draws video frame to canvas]
+    C --> D[Every 250ms send JPEG Blob]
+    D --> E[POST /process_camera_frame]
+    E --> F[Decode with OpenCV]
+    F --> G[process_frame()]
+    G --> H[Return annotated base64 JPEG]
+    H --> I[Browser updates live preview]
+```
+
+There is also a server-side `/camera_feed` route that uses OpenCV camera index `0`, but the current `detect.html` browser workflow uses `/process_camera_frame`.
+
+---
+
+## 👥 Roles & Workflows
+
+| Capability | Admin / Operator | Responder |
+| --- | ---: | ---: |
+| View dashboard | ✅ | ✅ |
+| Run uploaded-video detection | ✅ | ❌ |
+| Run browser-camera detection | ✅ | ❌ |
+| Review all non-false-alarm incidents | ✅ | ❌ |
+| Approve and send alerts | ✅ | ❌ |
+| Mark new incidents as false alarms | ✅ | ❌ |
+| View dispatched alerts | ❌ | ✅ |
+| Update response status | ❌ | ✅ |
+| Resolve incident | ❌ | ✅ |
+
+### Admin Flow
+
+1. Register or log in as `admin`.
+2. Open **Dashboard** for live operational metrics.
+3. Open **Test Model** to upload footage or start browser-camera detection.
+4. Review saved detections on **Alerts**.
+5. Choose **Approve and Send** to route an incident to responders.
+6. Choose **False Alarm** to hide an unreported incident from live queues while keeping it in the database.
+
+### Responder Flow
+
+1. Register or log in as `responder`.
+2. Land on the **Responder Dashboard**.
+3. View assigned/dispatched alerts.
+4. Open alert details to inspect the saved snapshot.
+5. Update the response state: `Acknowledged`, `En Route`, `On Scene`, or `Resolved`.
+6. Resolving an alert closes the incident.
+
+---
+
+## 📊 Dashboards & Navigation
+
+| Page | Template | Access | Purpose |
+| --- | --- | --- | --- |
+| Intro | `intro.html` | Public | Public entry page. |
+| Login / Signup | `login.html` | Public | Login, signup, and role-locked registration. |
+| Role Selection | `select_role.html` | Public | Select admin or responder before registration. |
+| Admin Dashboard | `home.html` | Admin | Active alerts, camera count, events today, average model detection time, recent events. |
+| Test Model | `detect.html` | Admin | Video upload detection and browser camera detection. |
+| Alert Management | `alerts.html` | Admin | Incident cards, evidence preview, approve/send, false alarm. |
+| Responder Dashboard | `respond.html` | Responder | Assigned alerts, pending counts, response status chart. |
+| Responder Alerts | `responder_alert.html` | Responder | Assigned case list, detail view, status updates, image enlargement. |
+
+The shared `sidebar.html` changes navigation by role:
+
+| Role | Sidebar Items |
+| --- | --- |
+| Admin | Dashboard, Alerts, Test Model, Logout |
+| Responder | Dashboard, Responder Alerts, Logout |
+
+---
+
+## 🚨 Alert Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> new: Snapshot inserted
+    new --> sent_to_responder: Admin approves
+    new --> false_alarm: Admin marks false alarm
+    sent_to_responder --> responded: Responder acknowledges / en route / on scene
+    responded --> closed: Responder resolves
+    sent_to_responder --> closed: Responder resolves directly
+    false_alarm --> [*]
+    closed --> [*]
+```
+
+| State | Stored Value | Visible To | Meaning |
+| --- | --- | --- | --- |
+| New | `new` or legacy empty status with `notified = 0` | Admin | Detection saved and waiting for review. |
+| Active | `sent_to_responder` | Admin + Responder | Admin approved and dispatched the alert. |
+| Responded | `responded` | Admin + Responder | A responder has accepted/progressed the case. |
+| Closed | `closed` | Admin + Responder | The responder resolved the case. |
+| False Alarm | `false_alarm` | Hidden from live queues | Admin dismissed it before dispatch. |
+
+### Responder Status Values
+
+| Value | UI Label |
+| --- | --- |
+| `pending` | Pending |
+| `acknowledged` | Acknowledged |
+| `en_route` | En Route |
+| `on_scene` | On Scene |
+| `resolved` | Resolved |
+
+---
+
+## 🗄️ Database Usage
+
+The application uses SQLite through `accivision.db`. On startup, `init_db()` creates missing tables and adds missing columns with non-destructive `ALTER TABLE` migrations.
+
+### `users`
+
+| Column | Purpose |
+| --- | --- |
+| `id` | Auto-incrementing user ID. |
+| `email` | Unique login email. |
+| `password` | Werkzeug hash; legacy SHA/plain values can be upgraded after successful login. |
+| `role` | `admin` or `responder`. |
+| `created_at` | Creation timestamp. |
+
+### `accidents`
+
+| Column | Purpose |
+| --- | --- |
+| `id` | Short UUID-based incident ID. |
+| `image` | Snapshot filename in `static/accidents/`. |
+| `timestamp` | Unix timestamp when the snapshot was captured. |
+| `notified` | Whether the alert was sent to responders. |
+| `responded` | Whether a responder has acted on it. |
+| `closed` | Whether the incident is resolved. |
+| `status` | Main lifecycle state. |
+| `sent_at`, `reported_at` | Dispatch timestamps. |
+| `responded_at` | First responder action time. |
+| `closed_at` | Resolution time. |
+| `response_status` | Responder progress value. |
+| `assigned_responder` | Responder email or `Responder Team`. |
+| `confidence` | Schema field for confidence; current insert path leaves it at default unless pre-existing rows include data. |
+| `source_video` | Schema field for source video; current insert path does not populate it. |
+| `detection_time_seconds` | Schema field for inference timing; current insert path does not populate it. |
+
+---
+
+## 🧩 Route Map
+
+| Route | Methods | Access | Description |
+| --- | --- | --- | --- |
+| `/`, `/intro.html` | GET | Public | Intro page. |
+| `/login`, `/login.html` | GET, POST | Public | Login and signup form. |
+| `/select-role`, `/select_role.html` | GET, POST | Public | Role selection before signup. |
+| `/register/admin` | GET | Public | Locks signup role to admin. |
+| `/register/responder` | GET | Public | Locks signup role to responder. |
+| `/logout` | GET | Logged in | Clears session and returns to intro. |
+| `/home` | GET | Logged in | Role-aware dashboard redirect. |
+| `/dashboard`, `/home.html` | GET | Admin | Admin dashboard. |
+| `/detect`, `/detect.html` | GET | Admin | Detection workspace. |
+| `/alerts`, `/alerts.html` | GET | Admin | Alert management. |
+| `/responder` | GET | Responder | Responder dashboard. |
+| `/responder/alerts`, `/responder_alert.html` | GET | Responder | Responder alert list. |
+| `/responder/alert/<accident_id>` | GET | Responder | Responder alert detail. |
+| `/upload` | POST | Admin | Upload and validate video file. |
+| `/video_feed` | GET | Admin | Multipart processed video stream. |
+| `/camera_feed` | GET | Admin | Server-side camera stream from camera index `0`. |
+| `/process_camera_frame` | POST | Admin | Process one browser camera frame. |
+| `/stop_video` | POST | Admin | Stop upload processing and remove active upload. |
+| `/stop_camera` | POST | Admin | Stop server-side camera flag. |
+| `/accident_status` | GET | Admin | One-shot accident flag for warning audio. |
+| `/report_alert/<accident_id>` | POST | Admin | Send incident to responders. |
+| `/false_alarm/<accident_id>` | POST | Admin | Mark unreported incident as false alarm. |
+| `/respond_alert/<accident_id>` | POST | Responder | Legacy/simple acknowledgement endpoint. |
+| `/close_alert/<accident_id>` | POST | Responder | Legacy/simple close endpoint. |
+| `/responder/update-status` | POST | Responder | Update responder status. |
+| `/contact_authority` | POST | Logged in admin only | Legacy dispatch wrapper. |
+| `/mark_responded` | POST | Logged in responder only | Legacy responder wrapper. |
+| `/uploads/<filename>` | GET | Logged in | Serve uploaded media while available. |
+
+---
+
+## 📁 Project Structure
+
+```text
+accident_web/
+├── app.py                         # Flask app, routes, auth, DB, detection pipeline
+├── accivision.db                  # SQLite database
+├── best.pt                        # Custom YOLO model
+├── coco.txt                       # Detection labels: accident, cars
+├── requirements.txt               # Python dependencies
+├── README.md                      # Project documentation
+├── cloudflared-windows-amd64.exe  # Bundled tunnel executable, not called by app.py
+├── templates/
+│   ├── intro.html                 # Public introduction page
+│   ├── login.html                 # Login and signup form
+│   ├── select_role.html           # Role selection
+│   ├── sidebar.html               # Shared role-aware navigation
+│   ├── home.html                  # Dashboard layout
+│   ├── detect.html                # Admin detection workspace
+│   ├── alerts.html                # Admin alert management
+│   ├── respond.html               # Responder dashboard
+│   └── responder_alert.html       # Responder list/detail workspace
+├── static/
+│   ├── css/
+│   │   └── style.css              # Application styling
+│   ├── assets/
+│   │   └── warning.mp3            # Browser warning sound
+│   └── accidents/
+│       └── accident_*.jpg         # Saved detection snapshots
+└── uploads/
+    └── uploaded videos            # Temporary uploaded media during analysis
+```
+
+---
+
+## ⚙️ Installation & Run
+
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python app.py
+```
+
+The local development server starts on:
+
+```text
+http://localhost:5001
+```
+
+Required runtime files in the project root:
+
+| File | Required For |
+| --- | --- |
+| `best.pt` | YOLO accident detection model. |
+| `coco.txt` | Class label lookup. |
+| `accivision.db` | SQLite storage; created/migrated by the app if needed. |
+
+---
+
+## 🧪 Current Dependencies
 
 ```text
 flask
@@ -72,260 +436,39 @@ ultralytics
 numpy
 ```
 
-## Project Structure
+---
 
-```text
-accident_web/
-|-- app.py                         # Main Flask app, routes, database logic, detection pipeline
-|-- accivision.db                  # SQLite database used by the app
-|-- best.pt                        # Custom YOLOv8 model file
-|-- coco.txt                       # Class labels: accident, cars
-|-- requirements.txt               # Python dependencies
-|-- README.md                      # Project documentation
-|-- cloudflared-windows-amd64.exe  # Bundled Cloudflare tunnel executable
-|
-|-- templates/
-|   |-- intro.html                 # Public landing page
-|   |-- login.html                 # Login and registration form
-|   |-- select_role.html           # Role selection page
-|   |-- sidebar.html               # Shared authenticated navigation
-|   |-- home.html                  # Dashboard
-|   |-- detect.html                # Admin detection workspace
-|   |-- alerts.html                # Admin alert review page
-|   |-- respond.html               # Responder dashboard
-|   `-- responder_alert.html       # Responder list/detail page
-|
-|-- static/
-|   |-- css/
-|   |   `-- style.css              # Application styling
-|   |-- assets/
-|   |   `-- warning.mp3            # Browser warning sound
-|   `-- accidents/
-|       `-- accident_*.jpg         # Saved accident snapshots
-|
-`-- uploads/
-    `-- video files                # Uploaded videos while detection is running
-```
+## 🔐 Authentication & Access Control
 
-## Routes and Pages
+AcciVision uses Flask sessions and role decorators:
 
-| Route | Access | Purpose |
-| --- | --- | --- |
-| `/` and `/intro.html` | Public | Intro page. |
-| `/login` and `/login.html` | Public | Login and sign-up form. |
-| `/select-role` and `/select_role.html` | Public | Choose Admin or Responder before registration. |
-| `/register/admin` | Public | Starts admin registration. |
-| `/register/responder` | Public | Starts responder registration. |
-| `/logout` | Logged in | Clears session and returns to intro page. |
-| `/dashboard`, `/home.html` | Admin | Admin dashboard. |
-| `/home` | Logged in | Redirects the user to the correct dashboard for their role. |
-| `/detect`, `/detect.html` | Admin | Video upload and camera detection workspace. |
-| `/alerts`, `/alerts.html` | Admin | Alert review and dispatch page. |
-| `/responder` | Responder | Responder dashboard. |
-| `/responder/alerts`, `/responder_alert.html` | Responder | Responder alert list. |
-| `/responder/alert/<accident_id>` | Responder | Alert detail and status update page. |
-| `/upload` | Admin | Uploads a video file. |
-| `/video_feed` | Admin | Streams processed uploaded-video frames. |
-| `/process_camera_frame` | Admin | Processes one browser camera frame. |
-| `/camera_feed` | Admin | Streams server-side camera frames from camera index 0. |
-| `/accident_status` | Admin | Polled by the browser to trigger warning sound. |
-| `/report_alert/<accident_id>` | Admin | Sends an alert to responders. |
-| `/false_alarm/<accident_id>` | Admin | Marks a new alert as false alarm. |
-| `/responder/update-status` | Responder | Updates responder status. |
-
-## Database
-
-The database is SQLite and is opened through `get_db()` in `app.py`. The app creates or migrates tables at startup using `init_db()`.
-
-### `users`
-
-| Column | Purpose |
+| Decorator | Protects |
 | --- | --- |
-| `id` | User ID. |
-| `email` | Unique login email. |
-| `password` | Hashed password. Older plain/SHA-256 values can be upgraded after successful login. |
-| `role` | `admin` or `responder`. |
-| `created_at` | Creation timestamp. |
+| `login_required` | Any authenticated route. |
+| `admin_required` | Detection, admin dashboard, upload, alerts, dispatch, false alarm. |
+| `responder_required` | Responder dashboard, responder alert details, response updates. |
 
-### `accidents`
+Passwords are created with Werkzeug password hashing. The verifier also supports legacy SHA-256 or plain stored values and upgrades them to Werkzeug hashes after a successful login.
 
-| Column | Purpose |
-| --- | --- |
-| `id` | Short UUID-based accident ID. |
-| `image` | Saved accident snapshot filename. |
-| `timestamp` | Detection time as Unix timestamp. |
-| `notified` | Whether the alert was sent to responders. |
-| `responded` | Whether a responder has acknowledged/progressed the alert. |
-| `closed` | Whether the case is closed. |
-| `status` | Main lifecycle status: `new`, `sent_to_responder`, `responded`, `closed`, or `false_alarm`. |
-| `response_status` | Responder status: `pending`, `acknowledged`, `en_route`, `on_scene`, or `resolved`. |
-| `sent_at`, `reported_at`, `responded_at`, `closed_at` | Alert workflow timestamps. |
-| `detection_time_seconds` | Model inference time for saved detections. |
-| `assigned_responder` | Responder email or default responder team label. |
-| `confidence` | Accident confidence saved with the detection. |
-| `source_video` | Uploaded video filename when the alert came from a video upload. |
+---
 
-## How the Accident Detection Model Works
+## ✅ Implementation Notes
 
-The model is loaded once when `app.py` starts:
+- The YOLO model is loaded once globally: `YOLO(os.path.join(BASE_DIR, "best.pt"))`.
+- `coco.txt` currently defines two classes: `accident` and `cars`.
+- Browser-camera detection sends JPEG frames to Flask about every `250ms`.
+- Uploaded-video frames are streamed back as `multipart/x-mixed-replace`.
+- Warning sound is polling-based, not WebSocket-based.
+- Saved accident snapshots are throttled to reduce duplicate evidence during continuous detections.
+- False alarms remain in the database but are hidden from live admin and responder queues.
+- Locations shown in dashboards are generated display labels from the accident ID, not GPS coordinates.
 
-```python
-model = YOLO(MODEL_PATH)
-```
+---
 
-The label file `coco.txt` currently contains:
+<div align="center">
 
-```text
-accident
-cars
-```
+### Built for practical AI-assisted traffic incident monitoring
 
-Detection steps in the current code:
+`Flask` · `YOLOv8` · `OpenCV` · `SQLite` · `Admin Dashboard` · `Responder Workflow`
 
-1. A frame is resized to `768 x 432`.
-2. YOLO prediction runs with image size `512` and confidence threshold `0.45`.
-3. The app reads bounding boxes, class IDs, confidence scores, and labels.
-4. If a label is `accident` and confidence is greater than `0.70`, the frame gets a red accident box and can contribute to confirmation.
-5. Other detections are drawn with green boxes.
-6. The app keeps a confirmation counter and requires `5` consecutive confirmed accident frames.
-7. A confirmed accident is considered reviewable if it passes the review threshold. Because accident confirmation only increments for accident boxes above `0.70`, current saved review alerts are practically above 70% confidence.
-8. A confirmed accident is auto-dispatched if confidence is at least `0.80`; otherwise, it waits for admin review.
-9. Detection time is stored for saved snapshots and shown as average model detection time on the dashboard.
-
-Important constants in `app.py`:
-
-| Constant | Value | Meaning |
-| --- | --- | --- |
-| `ACCIDENT_CONFIRM_FRAMES` | `5` | Number of confirmed frames required before creating an alert. |
-| `ADMIN_REVIEW_CONFIDENCE_THRESHOLD` | `0.50` | Review threshold after confirmation; the current accident-box gate means saved review alerts are practically above 70%. |
-| `AUTO_REPORT_CONFIDENCE_THRESHOLD` | `0.80` | Confidence required for automatic responder dispatch. |
-| `FRAME_SKIP_INTERVAL` | `2` | Processes every second frame for video/camera stream loops. |
-| `MAX_CONTENT_LENGTH` | `200 MB` | Maximum upload size. |
-
-## Alert and Response Process
-
-```text
-Video or Camera Frame
-        |
-        v
-YOLOv8 Prediction
-        |
-        v
-Accident box above 70% confidence?
-        |
-        v
-5 confirmed frames?
-        |
-        +-- No --> Continue monitoring
-        |
-        +-- Yes
-             |
-             +-- Confidence >= 80% --> Save snapshot and send to responder
-             |
-             +-- Confidence > 70% and < 80% --> Save snapshot for admin review
-```
-
-Admin review states:
-
-| Admin Action | Result |
-| --- | --- |
-| Approve and Send | Sets the alert to `sent_to_responder`, marks it notified, assigns `Responder Team`, and makes it visible to responders. |
-| False Alarm | Sets status to `false_alarm`; the record remains in the database but is hidden from the admin live list and responder queues. |
-
-Responder states:
-
-| Status | Meaning |
-| --- | --- |
-| `pending` | Alert is waiting for responder action. |
-| `acknowledged` | Responder acknowledged the alert. |
-| `en_route` | Responder is on the way. |
-| `on_scene` | Responder arrived at the scene. |
-| `resolved` | Case is closed. |
-
-## How to Run the Project
-
-1. Create and activate a virtual environment.
-
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
-
-2. Install dependencies.
-
-```bash
-pip install -r requirements.txt
-```
-
-3. Make sure these model files are present in the project root:
-
-```text
-best.pt
-coco.txt
-```
-
-The app can create and migrate the SQLite database automatically, but it expects the model and label files to exist.
-
-4. Run the Flask app.
-
-```bash
-python app.py
-```
-
-5. Open the app in a browser.
-
-```text
-http://127.0.0.1:5001
-```
-
-The app is configured in `app.py` to run with:
-
-```python
-app.run(debug=True, host='0.0.0.0', port=5001, use_reloader=False, threaded=True)
-```
-
-## Screenshots
-
-Add screenshots of the running application here when preparing a report or presentation.
-
-| Page | Suggested Screenshot |
-| --- | --- |
-| Intro | Public AcciVision landing page. |
-| Login / Role Selection | User login and role registration flow. |
-| Admin Dashboard | Metrics and recent events. |
-| Test Model | Video upload or camera detection workspace. |
-| Alert Management | Admin alert cards and approval actions. |
-| Responder Dashboard | Assigned alerts and response status chart. |
-| Responder Alert Details | Evidence preview and response status buttons. |
-
-Example Markdown format:
-
-```markdown
-![Admin Dashboard](docs/screenshots/admin-dashboard.png)
-```
-
-## Notes and Limitations
-
-- The app uses a hard-coded Flask secret key in `app.py`; this should be moved to an environment variable for production.
-- SQLite is suitable for local development and demos, but a production deployment should use a stronger database setup.
-- The dashboard camera count checks local camera indexes `0` to `3` and displays the result beside a hard-coded `/165` label in the template.
-- Alert locations are generated by `build_fake_location()` from a fixed list, not from GPS or map data.
-- Uploaded videos are deleted after processing or when stopped, while saved accident snapshots remain in `static/accidents/`.
-- Snapshot saving is throttled to one saved snapshot every 30 seconds to reduce duplicates during sustained detections.
-- The browser camera flow sends captured frames to `/process_camera_frame`; it depends on browser camera permission and device support.
-- `/camera_feed` exists for server-side camera index `0`, but the current detection page mainly uses browser camera frame uploads.
-- The app has role-based route protection, but it does not include advanced account management, password reset, audit logs, or external emergency-service integration.
-- The YOLO model accuracy depends on the quality and training data of `best.pt`.
-
-## Future Improvements
-
-- Move secrets and configuration values into environment variables.
-- Add production-ready database migrations and a managed database.
-- Add real camera/source management instead of local camera probing only.
-- Add real location metadata, maps, and GPS support.
-- Add notification integrations such as SMS, email, dispatch APIs, or WebSocket alerts.
-- Add audit logs for admin approvals, false alarms, and responder updates.
-- Add model evaluation metrics and configurable detection thresholds.
-- Add automated tests for authentication, role guards, alert transitions, and detection API responses.
-- Add screenshot assets under a documented `docs/screenshots/` folder.
-- Improve deployment documentation for local network, cloud, or tunnel-based access.
+</div>

@@ -38,15 +38,11 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(ACCIDENTS_DIR, exist_ok=True)
 
 
-# Model and label assets are resolved once because inference depends on both being available before requests arrive.
-MODEL_PATH = os.path.join(BASE_DIR, 'best.pt')
-LABELS_PATH = os.path.join(BASE_DIR, 'coco.txt')
-
 # The detector is loaded once at startup to avoid repeated initialization costs during live monitoring.
-model = YOLO(MODEL_PATH)
+model = YOLO(os.path.join(BASE_DIR, "best.pt"))
 
 # Label metadata is read once so detection classes can be translated into operator-facing states throughout the session.
-with open(LABELS_PATH, 'r') as f:
+with open(os.path.join(BASE_DIR, "coco.txt"), 'r') as f:
     class_list = [line.strip() for line in f.read().strip().split('\n')]
 
 # Shared runtime flags coordinate long-lived streaming loops and browser polling across multiple request handlers.
@@ -61,17 +57,10 @@ camera_inventory_lock = threading.Lock()
 
 # Snapshot throttling prevents one sustained incident from generating excessive duplicate evidence.
 last_snapshot_time = 0
-accident_confirm_count = 0
-ACCIDENT_CONFIRM_FRAMES = 5
 
 # Encoding settings are fixed up front to keep frame streaming predictable under repeated load.
 ENCODE_PARAM = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
 
-# High-confidence incidents go straight to responders; medium-confidence incidents wait for admin review.
-ADMIN_REVIEW_CONFIDENCE_THRESHOLD = 0.50
-AUTO_REPORT_CONFIDENCE_THRESHOLD = 0.80
-FRAME_SKIP_INTERVAL = 2
-MODEL_INPUT_SIZE = 640
 CAMERA_DISCOVERY_MAX_INDEX = 4
 CAMERA_DISCOVERY_CACHE_SECONDS = 15
 
@@ -863,7 +852,7 @@ def update_responder_status_by_id(accident_id, response_status):
 
 
 # Snapshot persistence runs off the streaming path because evidence capture should not block live detection output.
-def save_snapshot_background(frame_copy, confidence=0.0, auto_send_to_responder=False, detection_time_seconds=None, source_video=None):
+def save_snapshot_background(frame_copy):
     # 1. Save Evidence Snapshot
     accident_id = str(uuid.uuid4())[:8]
     filename = f"accident_{accident_id}.jpg"
@@ -875,22 +864,14 @@ def save_snapshot_background(frame_copy, confidence=0.0, auto_send_to_responder=
     conn = get_db()
     conn.execute(
         '''
-        INSERT INTO accidents (
-            id, image, timestamp, notified, status, sent_at, reported_at,
-            detection_time_seconds, confidence, source_video
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO accidents (id, image, timestamp, notified)
+        VALUES (?, ?, ?, ?)
         ''',
         (
             accident_id,
             filename,
             captured_at,
-            1 if auto_send_to_responder else 0,
-            'sent_to_responder' if auto_send_to_responder else 'new',
-            captured_at if auto_send_to_responder else None,
-            captured_at if auto_send_to_responder else None,
-            detection_time_seconds,
-            confidence,
-            source_video,
+            0,
         )
     )
     conn.commit()
@@ -899,70 +880,40 @@ def save_snapshot_background(frame_copy, confidence=0.0, auto_send_to_responder=
 
 # Frame processing owns inference, visual overlays, and alert signaling because those concerns must stay synchronized per image.
 def process_frame(frame):
-    # 1. Model Inference and Confidence Routing
     global accident_flag
-    global accident_confirm_count
 
     frame = cv2.resize(frame, (768, 432))
-    inference_started_at = time.perf_counter()
-
-    results = model.predict(
-        frame,
-        imgsz=512,
-        conf=0.45,
-        verbose=False
-    )
-
-    detection_time_seconds = time.perf_counter() - inference_started_at
+    results = model.predict(frame, imgsz=512, conf=0.45, verbose=False)
+    accident_detected = False
 
     boxes = results[0].boxes
-    accident_detected = False
-    max_accident_confidence = 0.0
-
-    if boxes is not None and len(boxes) > 0:
-        data = boxes.data.cpu().numpy()
-
-        for row in data:
-            x1, y1, x2, y2 = int(row[0]), int(row[1]), int(row[2]), int(row[3])
+    if boxes is not None and boxes.data is not None:
+        for row in boxes.data:
+            x1, y1, x2, y2 = row[0:4]
             conf = row[4]
             cls_id = int(row[5])
 
             label = class_list[cls_id] if cls_id < len(class_list) else "Unknown"
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            confidence = float(conf)
 
-            if label == "accident" and conf > 0.70:
+            if label == "accident" and confidence > 0.60:
                 accident_detected = True
-                max_accident_confidence = max(max_accident_confidence, float(conf))
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 4)
-                cv2.putText(frame, f"ACCIDENT {conf:.0%}", (x1, y1 - 12),
+                cv2.putText(frame, f"ACCIDENT {confidence:.0%}", (x1, y1 - 12),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
-
             else:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {conf:.0%}", (x1, y1 - 10),
+                cv2.putText(frame, f"{label} {confidence:.0%}", (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
 
-    # Multi-frame confirmation
-    if accident_detected and max_accident_confidence >= 0.55:
-        accident_confirm_count += 1
-    else:
-        accident_confirm_count = 0
-
-    reviewable_accident = (
-        accident_confirm_count >= ACCIDENT_CONFIRM_FRAMES
-        and max_accident_confidence >= ADMIN_REVIEW_CONFIDENCE_THRESHOLD
-    )
-
-    auto_send_to_responder = max_accident_confidence >= AUTO_REPORT_CONFIDENCE_THRESHOLD
-
-    if reviewable_accident:
+    if accident_detected:
         h, w = frame.shape[:2]
         overlay = frame.copy()
-
         cv2.rectangle(overlay, (0, 0), (w, 65), (0, 0, 180), -1)
         cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
 
-        text = "ACCIDENT DETECTED - RESPONDER ALERT" if auto_send_to_responder else "ACCIDENT DETECTED - ADMIN REVIEW"
-
+        text = "!!! ACCIDENT DETECTED !!!"
         font = cv2.FONT_HERSHEY_DUPLEX
         (tw, th), _ = cv2.getTextSize(text, font, 1.1, 2)
         cx = (w - tw) // 2
@@ -976,10 +927,11 @@ def process_frame(frame):
         with accident_flag_lock:
             accident_flag = True
 
-    return frame, reviewable_accident, auto_send_to_responder, detection_time_seconds, max_accident_confidence
+    return frame, accident_detected
+
+
 # Snapshot gating balances evidence retention against storage noise during sustained detections.
-def try_save_snapshot(frame, confidence=0.0, auto_send_to_responder=False, detection_time_seconds=None, source_video=None):
-    # 1. Save One Snapshot Per Cooldown
+def try_save_snapshot(frame):
     global last_snapshot_time
     now = time.time()
     if now - last_snapshot_time >= 30:
@@ -987,7 +939,7 @@ def try_save_snapshot(frame, confidence=0.0, auto_send_to_responder=False, detec
         snapshot = frame.copy()
         threading.Thread(
             target=save_snapshot_background,
-            args=(snapshot, confidence, auto_send_to_responder, detection_time_seconds, source_video),
+            args=(snapshot,),
             daemon=True
         ).start()
 
@@ -1009,7 +961,6 @@ def generate_video_frames():
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     video_active = True
-    frame_count = 0
 
     try:
         while video_active:
@@ -1018,21 +969,10 @@ def generate_video_frames():
             if not ret:
                 break
 
-            frame_count += 1
-
-            if frame_count % FRAME_SKIP_INTERVAL != 0:
-                continue
-
-            processed, detected, auto_send_to_responder, detection_time_seconds, confidence = process_frame(frame)
+            processed, detected = process_frame(frame)
 
             if detected:
-                try_save_snapshot(
-                    processed,
-                    confidence,
-                    auto_send_to_responder,
-                    detection_time_seconds,
-                    current_video_filename
-                )
+                try_save_snapshot(processed)
 
             _, buffer = cv2.imencode('.jpg', processed, ENCODE_PARAM)
 
@@ -1071,22 +1011,16 @@ def generate_camera_frames():
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     camera_active = True
-    frame_count = 0
 
     while camera_active:
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame_count += 1
-        if frame_count % FRAME_SKIP_INTERVAL != 0:
-            continue
+        processed, detected = process_frame(frame)
 
-        processed, detected, auto_send_to_responder, detection_time_seconds, confidence = process_frame(frame)
-
-        
         if detected:
-            try_save_snapshot(processed, confidence, auto_send_to_responder, detection_time_seconds)
+            try_save_snapshot(processed)
 
         _, buffer = cv2.imencode('.jpg', processed, ENCODE_PARAM)
         yield (b'--frame\r\n'
@@ -1536,10 +1470,10 @@ def process_camera_frame():
         return jsonify({'success': False, 'error': 'Unable to decode frame'}), 400
 
     try:
-        processed, detected, auto_send_to_responder, detection_time_seconds, confidence = process_frame(frame)
+        processed, detected = process_frame(frame)
 
         if detected:
-            try_save_snapshot(processed, confidence, auto_send_to_responder, detection_time_seconds)
+            try_save_snapshot(processed)
 
         ok, buffer = cv2.imencode('.jpg', processed, ENCODE_PARAM)
         if not ok:
@@ -1549,8 +1483,6 @@ def process_camera_frame():
         return jsonify({
             'success': True,
             'detected': detected,
-            'confidence': confidence,
-            'confidence_label': format_confidence(confidence),
             'image': f'data:image/jpeg;base64,{encoded}'
         })
     except Exception as exc:
