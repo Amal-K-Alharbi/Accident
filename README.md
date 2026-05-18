@@ -182,7 +182,7 @@ flowchart TD
     F --> G[Run process frame function]
     G --> H[Return annotated base64 JPEG]
     H --> I[Browser updates live preview]
-
+```
 Supported upload extensions:
 
 `mp4`, `avi`, `mov`, `mkv`, `wmv`, `webm`
@@ -203,7 +203,7 @@ flowchart TD
     G --> H[Run process frame function]
     H --> I[Stream annotated JPEG frames]
     I --> J[Delete uploaded file after analysis or stop]
-
+```
 There is also a server-side `/camera_feed` route that uses OpenCV camera index `0`, but the current `detect.html` browser workflow uses `/process_camera_frame`.
 
 ---
