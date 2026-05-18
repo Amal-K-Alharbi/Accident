@@ -171,36 +171,38 @@ sequenceDiagram
 
 ### Uploaded Video
 
+
 ```mermaid
 flowchart TD
-    A[Admin opens Test Model] --> B[Selects or drags video]
-    B --> C[POST /upload]
-    C --> D[Validate extension + 200 MB Flask limit]
-    D --> E[Save file in uploads/]
-    E --> F[Browser loads /video_feed]
-    F --> G[OpenCV reads frames]
-    G --> H[process_frame()]
-    H --> I[Stream annotated JPEG frames]
-    I --> J[Delete uploaded file after analysis or stop]
-```
+    A[Admin clicks Open Camera] --> B[Browser requests camera access]
+    B --> C[Browser draws video frame to canvas]
+    C --> D[Every 250 ms send JPEG Blob]
+    D --> E[POST process camera frame endpoint]
+    E --> F[Decode frame with OpenCV]
+    F --> G[Run process frame function]
+    G --> H[Return annotated base64 JPEG]
+    H --> I[Browser updates live preview]
 
 Supported upload extensions:
 
 `mp4`, `avi`, `mov`, `mkv`, `wmv`, `webm`
 
-### Browser Camera
+
+
+```markdown
+### Uploaded Video
 
 ```mermaid
 flowchart TD
-    A[Admin clicks Open Camera] --> B[navigator.mediaDevices.getUserMedia]
-    B --> C[Browser draws video frame to canvas]
-    C --> D[Every 250ms send JPEG Blob]
-    D --> E[POST /process_camera_frame]
-    E --> F[Decode with OpenCV]
-    F --> G[process_frame()]
-    G --> H[Return annotated base64 JPEG]
-    H --> I[Browser updates live preview]
-```
+    A[Admin opens Test Model] --> B[Selects or drags video]
+    B --> C[POST upload endpoint]
+    C --> D[Validate extension and 200 MB Flask limit]
+    D --> E[Save file in uploads folder]
+    E --> F[Browser loads video feed endpoint]
+    F --> G[OpenCV reads frames]
+    G --> H[Run process frame function]
+    H --> I[Stream annotated JPEG frames]
+    I --> J[Delete uploaded file after analysis or stop]
 
 There is also a server-side `/camera_feed` route that uses OpenCV camera index `0`, but the current `detect.html` browser workflow uses `/process_camera_frame`.
 
