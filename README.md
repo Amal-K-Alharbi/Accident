@@ -171,39 +171,41 @@ sequenceDiagram
 
 ### Uploaded Video
 
-
 ```mermaid
 flowchart TD
-    A[Admin clicks Open Camera] --> B[Browser requests camera access]
-    B --> C[Browser draws video frame to canvas]
-    C --> D[Every 250 ms send JPEG Blob]
-    D --> E[POST process camera frame endpoint]
-    E --> F[Decode frame with OpenCV]
-    F --> G[Run process frame function]
-    G --> H[Return annotated base64 JPEG]
-    H --> I[Browser updates live preview]
+    A[Admin opens Test Model page] --> B[Selects or drags video file]
+    B --> C[Send video to upload endpoint]
+    C --> D[Validate file type and size limit]
+    D --> E[Save video inside uploads folder]
+    E --> F[Browser opens video feed endpoint]
+    F --> G[OpenCV reads video frames]
+    G --> H[Run accident detection function]
+    H --> I[Return annotated video stream]
+    I --> J[Browser displays processed video]
+    J --> K[Delete uploaded file after stop or completion]
 ```
+
 Supported upload extensions:
 
 `mp4`, `avi`, `mov`, `mkv`, `wmv`, `webm`
 
+---
 
-
-```markdown
-### Uploaded Video
+### Browser Camera
 
 ```mermaid
 flowchart TD
-    A[Admin opens Test Model] --> B[Selects or drags video]
-    B --> C[POST upload endpoint]
-    C --> D[Validate extension and 200 MB Flask limit]
-    D --> E[Save file in uploads folder]
-    E --> F[Browser loads video feed endpoint]
-    F --> G[OpenCV reads frames]
-    G --> H[Run process frame function]
-    H --> I[Stream annotated JPEG frames]
-    I --> J[Delete uploaded file after analysis or stop]
+    A[Admin clicks Open Camera] --> B[Browser requests camera permission]
+    B --> C[Camera stream appears in browser]
+    C --> D[Browser captures frame from video]
+    D --> E[Convert frame to JPEG blob]
+    E --> F[Send frame to process camera frame endpoint]
+    F --> G[Decode frame using OpenCV]
+    G --> H[Run accident detection function]
+    H --> I[Return annotated base64 image]
+    I --> J[Browser updates live preview]
 ```
+
 There is also a server-side `/camera_feed` route that uses OpenCV camera index `0`, but the current `detect.html` browser workflow uses `/process_camera_frame`.
 
 ---
