@@ -37,4 +37,4 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "vm"
-run = ["python", "app.py"]
+run = "gunicorn --bind 0.0.0.0:5000 app:app"
