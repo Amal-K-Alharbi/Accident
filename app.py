@@ -218,10 +218,8 @@ def get_alert_counts(conn=None):
         SELECT
             SUM(
                 CASE
-                    WHEN closed = 0 AND (
-                        status IN ('sent_to_responder', 'responded')
-                        OR (status IS NULL AND notified = 1)
-                    ) THEN 1
+                    WHEN status NOT IN ('closed', 'false_alarm')
+                    THEN 1
                     ELSE 0
                 END
             ) AS active_alerts_count,
@@ -488,7 +486,8 @@ def build_dashboard_context():
         '''
         SELECT COUNT(*) AS total
         FROM accidents
-        WHERE date(timestamp, 'unixepoch', 'localtime') = date('now', 'localtime')
+        WHERE status NOT IN ('false_alarm')
+          AND timestamp >= (strftime('%s', 'now') - 86400)
         '''
     ).fetchone()['total'] or 0
     conn.close()
@@ -879,11 +878,27 @@ def save_snapshot_background(frame_copy):
 
 
 # Frame processing owns inference, visual overlays, and alert signaling because those concerns must stay synchronized per image.
+ACCIDENT_TRIGGER_CONFIDENCE = 0.68
+ACCIDENT_CONFIRM_FRAMES = 2
+ACCIDENT_ALERT_DELAY_SECONDS = 0.6
+ACCIDENT_RESET_SECONDS = 1.5
+
+accident_confirm_count = 0
+accident_first_seen_time = None
+accident_alert_sent = False
+last_accident_seen_time = 0
+
+
 def process_frame(frame):
     global accident_flag
+    global accident_confirm_count
+    global accident_first_seen_time
+    global accident_alert_sent
+    global last_accident_seen_time
 
     frame = cv2.resize(frame, (768, 432))
     results = model.predict(frame, imgsz=512, conf=0.45, verbose=False)
+
     accident_detected = False
 
     boxes = results[0].boxes
@@ -897,19 +912,57 @@ def process_frame(frame):
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             confidence = float(conf)
 
-            if label == "accident" and confidence > 0.60:
+            if label == "accident" and confidence >= ACCIDENT_TRIGGER_CONFIDENCE:
                 accident_detected = True
+
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 4)
-                cv2.putText(frame, f"ACCIDENT {confidence:.0%}", (x1, y1 - 12),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
+                cv2.putText(
+                    frame,
+                    f"ACCIDENT {confidence:.0%}",
+                    (x1, y1 - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 0, 255),
+                    2,
+                    cv2.LINE_AA
+                )
             else:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {confidence:.0%}", (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+                cv2.putText(
+                    frame,
+                    f"{label} {confidence:.0%}",
+                    (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA
+                )
+
+    now = time.time()
 
     if accident_detected:
+        accident_confirm_count += 1
+        last_accident_seen_time = now
+
+        if accident_first_seen_time is None:
+            accident_first_seen_time = now
+    else:
+        if now - last_accident_seen_time > ACCIDENT_RESET_SECONDS:
+            accident_confirm_count = 0
+            accident_first_seen_time = None
+            accident_alert_sent = False
+
+    confirmed_accident = (
+        accident_confirm_count >= ACCIDENT_CONFIRM_FRAMES
+        and accident_first_seen_time is not None
+        and now - accident_first_seen_time >= ACCIDENT_ALERT_DELAY_SECONDS
+    )
+
+    if confirmed_accident:
         h, w = frame.shape[:2]
         overlay = frame.copy()
+
         cv2.rectangle(overlay, (0, 0), (w, 65), (0, 0, 180), -1)
         cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
 
@@ -924,11 +977,12 @@ def process_frame(frame):
         if int(time.time() * 3) % 2 == 0:
             cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), 5)
 
-        with accident_flag_lock:
-            accident_flag = True
+        if not accident_alert_sent:
+            with accident_flag_lock:
+                accident_flag = True
+            accident_alert_sent = True
 
-    return frame, accident_detected
-
+    return frame, confirmed_accident
 
 # Snapshot gating balances evidence retention against storage noise during sustained detections.
 def try_save_snapshot(frame):
@@ -1534,7 +1588,7 @@ def accident_status():
 
 # Direct execution support keeps local development straightforward without affecting production deployment patterns.
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001,
+    app.run(debug=True, host='0.0.0.0', port=5000,
             use_reloader=False, threaded=True)
 
 
