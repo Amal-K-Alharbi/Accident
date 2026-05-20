@@ -3,3 +3,9 @@ opencv-python
 pandas
 ultralytics
 numpy
+flask
+numpy
+opencv-python
+pandas
+ultralytics
+werkzeug
