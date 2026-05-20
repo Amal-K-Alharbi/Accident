@@ -1,12 +1,9 @@
 flask
-opencv-python
+opencv-python-headless
 pandas
 ultralytics
 numpy
-flask
-numpy
-opencv-python
-pandas
-ultralytics
 werkzeug
 gunicorn
+torch --index-url https://download.pytorch.org/whl/cpu
+torchvision --index-url https://download.pytorch.org/whl/cpu
