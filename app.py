@@ -20,7 +20,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # The application object centralizes configuration, routing, and request handling for the entire system.
 app = Flask(__name__)
 # Session signing depends on a stable secret so authenticated state cannot be tampered with by the client.
-app.secret_key = 'accivision_secret_key_2024'
+app.secret_key = 'accivision_secret_key_26'
 # Uploaded media stays inside the project workspace to keep evidence and operator input under managed storage.
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
 # A hard upload limit protects the service from oversized requests that could degrade responsiveness.

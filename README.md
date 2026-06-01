@@ -54,7 +54,7 @@ flowchart LR
     F --> H[Browser Camera]
     G --> I[YOLO Frame Processing]
     H --> I
-    I --> J{Accident label > 60%?}
+    I --> J{Accident label >= 68% confirmed?}
     J -- No --> K[Annotated Feed Continues]
     J -- Yes --> L[Warning Overlay + Audio Flag]
     L --> M[Snapshot Saved, throttled to 30s]
@@ -124,12 +124,13 @@ The core detection path lives in `process_frame(frame)` inside `app.py`.
 | 1. Normalize frame | Every processed frame is resized to `768 x 432`. |
 | 2. Run YOLO | `model.predict(frame, imgsz=512, conf=0.45, verbose=False)` runs inference. |
 | 3. Read detections | The app reads each YOLO box, confidence score, and class ID. |
-| 4. Resolve label | Class IDs are mapped through `coco.txt`, currently `accident` and `cars`. |
-| 5. Draw overlays | Accident boxes above `0.60` are red; all other detections are green. |
-| 6. Trigger warning | If an accident is detected, the frame gets a warning banner and `accident_flag = True`. |
-| 7. Save snapshot | Streaming routes call `try_save_snapshot(processed)` when detection is true. |
-| 8. Throttle evidence | Snapshots are saved at most once every `30` seconds. |
-| 9. Persist alert | A background thread writes the JPEG and inserts an `accidents` row. |
+| 4. Resolve label | Class IDs are mapped through `coco.txt`; the `accident` label is the only label that can trigger an incident. |
+| 5. Draw overlays | Accident boxes at or above `0.68` are red; all other detections are green. |
+| 6. Confirm warning | A warning is confirmed after at least `2` accident frames and `0.6` seconds from first sighting. |
+| 7. Trigger warning | Confirmed accidents get a warning banner and set `accident_flag = True` once per detection run. |
+| 8. Save snapshot | Streaming routes call `try_save_snapshot(processed)` when the confirmed detection flag is true. |
+| 9. Throttle evidence | Snapshots are saved at most once every `30` seconds. |
+| 10. Persist alert | A background thread writes the JPEG and inserts an `accidents` row. |
 
 ```mermaid
 sequenceDiagram
@@ -146,7 +147,7 @@ sequenceDiagram
     YOLO-->>CV: Boxes, classes, scores
     CV-->>Flask: Annotated frame + detected flag
     Flask-->>UI: MJPEG frame or base64 JPEG
-    alt accident label confidence > 0.60
+    alt accident label confidence >= 0.68 and confirmed
         CV->>CV: Set accident_flag
         Flask->>DB: Save snapshot record, throttled
         UI->>Flask: Poll /accident_status
@@ -160,7 +161,9 @@ sequenceDiagram
 | Threshold | Meaning |
 | --- | --- |
 | `0.45` | YOLO prediction confidence threshold used by `model.predict(...)`. |
-| `> 0.60` | A detection is treated as an accident only when its label is `accident` and confidence is above 60%. |
+| `>= 0.68` | A detection contributes to an accident only when its label is `accident` and confidence is at least 68%. |
+| 2 frames + 0.6 seconds | Accident detections must persist long enough to become a confirmed accident alert. |
+| 1.5 seconds | If accident detections disappear for longer than this, the confirmation state and one-shot alert flag reset. |
 | 30 seconds | Snapshot throttle interval between saved accident images. |
 
 > Current code note: the database has `confidence`, `source_video`, and `detection_time_seconds` columns, but the active snapshot insert only stores `id`, `image`, `timestamp`, and `notified`. Therefore confidence and detection-time dashboard values may remain default/empty unless existing database rows already contain those fields.
@@ -378,7 +381,7 @@ accident_web/
 ├── app.py                         # Flask app, routes, auth, DB, detection pipeline
 ├── accivision.db                  # SQLite database
 ├── best.pt                        # Custom YOLO model
-├── coco.txt                       # Detection labels: accident, cars
+├── coco.txt                       # Detection label lookup loaded by app.py
 ├── requirements.txt               # Python dependencies
 ├── README.md                      # Project documentation
 ├── cloudflared-windows-amd64.exe  # Bundled tunnel executable, not called by app.py
@@ -417,7 +420,7 @@ python app.py
 The local development server starts on:
 
 ```text
-http://localhost:5001
+http://localhost:5000
 ```
 
 Required runtime files in the project root:
@@ -435,9 +438,9 @@ Required runtime files in the project root:
 ```text
 flask
 opencv-python
-pandas
 ultralytics
 numpy
+werkzeug
 ```
 
 ---
@@ -459,8 +462,8 @@ Passwords are created with Werkzeug password hashing. The verifier also supports
 ## ✅ Implementation Notes
 
 - The YOLO model is loaded once globally: `YOLO(os.path.join(BASE_DIR, "best.pt"))`.
-- `coco.txt` currently defines two classes: `accident` and `cars`.
-- Browser-camera detection sends JPEG frames to Flask about every `250ms`.
+- `coco.txt` supplies the class label lookup; `app.py` treats only the `accident` label as alert-triggering.
+- Browser-camera detection sends JPEG/base64 frame payloads to Flask through `/process_camera_frame`.
 - Uploaded-video frames are streamed back as `multipart/x-mixed-replace`.
 - Warning sound is polling-based, not WebSocket-based.
 - Saved accident snapshots are throttled to reduce duplicate evidence during continuous detections.
